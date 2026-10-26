@@ -18,8 +18,13 @@ fi
 
 # Setup build locations. There is no offline package mirror: the live rootfs is
 # a fully installed-shaped Kestrel system and the installer copies it to disk.
-build_cache_dir="/var/cache"
+build_cache_dir="${KESTREL_BUILD_CACHE:-/var/cache}"
 mkdir -p "$build_cache_dir/"
+
+# Heavy scratch (kernel/AUR source trees, mkarchiso work) is mounted from the
+# host (see iso-make) so it lands on /data rather than the container overlay.
+build_work_dir="${KESTREL_BUILD_WORK:-/tmp}"
+mkdir -p "$build_work_dir"
 
 # We base our ISO on the official arch ISO (releng) config
 cp -r /archiso/configs/releng/* "$build_cache_dir/"
@@ -50,8 +55,15 @@ cp -r /configs/* "$build_cache_dir/"
 # installer both read.
 mkdir -p "$build_cache_dir/airootfs/usr/share"
 if [[ -d /kestrel ]]; then
+  # The cache persists across builds. Without removing the old payload first,
+  # `cp -r /kestrel <existing dir>` nests it as kestrel/kestrel and silently
+  # keeps the previous build's config.
+  rm -rf "$build_cache_dir/airootfs/usr/share/kestrel"
   cp -rp /kestrel "$build_cache_dir/airootfs/usr/share/kestrel"
 else
+  # Same cache as the local-source branch: leaving the previous payload in
+  # place makes git clone fail on a non-empty directory.
+  rm -rf "$build_cache_dir/airootfs/usr/share/kestrel"
   git clone -b "$KESTREL_INSTALLER_REF" "https://github.com/$KESTREL_INSTALLER_REPO.git" \
     "$build_cache_dir/airootfs/usr/share/kestrel"
 fi
@@ -62,13 +74,13 @@ NODE_DIST_URL="https://nodejs.org/dist/latest"
 NODE_SHASUMS=$(curl -fsSL "$NODE_DIST_URL/SHASUMS256.txt")
 NODE_FILENAME=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $2}')
 NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $1}')
-curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "/tmp/$NODE_FILENAME"
-echo "$NODE_SHA /tmp/$NODE_FILENAME" | sha256sum -c - || {
+curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "$build_work_dir/$NODE_FILENAME"
+echo "$NODE_SHA $build_work_dir/$NODE_FILENAME" | sha256sum -c - || {
   echo "ERROR: Node.js checksum verification failed!"
   exit 1
 }
 mkdir -p "$build_cache_dir/airootfs/opt/packages/"
-cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
+cp "$build_work_dir/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Live environment packages: releng set plus the full Kestrel desktop, so the
 # ISO boots to a graphical Hyprland + Quickshell session and the copied rootfs
@@ -84,7 +96,7 @@ printf '%s\n' "${arch_packages[@]}" "${kestrel_desktop[@]}" >>"$build_cache_dir/
 # resolve the rest of the closure. The repo is used only to install these
 # packages into the live rootfs; it is not shipped on the ISO.
 aur_pkg_list="$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-aur.packages"
-aur_repo="/tmp/aur-repo"
+aur_repo="$build_work_dir/aur-repo"
 if [[ -f "$aur_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$aur_pkg_list"; then
   # The AUR list is the union of what Kestrel may need per machine. Two entries
   # cannot be baked into the live rootfs baseline:
@@ -105,7 +117,7 @@ if [[ -f "$aur_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$aur_pkg_list"; t
   done < <(grep -vE '^[[:space:]]*(#|$)' "$aur_pkg_list")
 
   # Persistent across runs when the host cache dir is mounted (see iso-make).
-  aur_pkgdest="${KESTREL_AUR_CACHE:-/tmp/aur-packages}"
+  aur_pkgdest="${KESTREL_AUR_CACHE:-$build_work_dir/aur-packages}"
   mkdir -p "$aur_pkgdest" "$aur_repo"
 
   # yay resolves the whole AUR closure (AUR packages depend on each other), so a
@@ -126,7 +138,7 @@ if [[ -f "$aur_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$aur_pkg_list"; t
     echo "builduser ALL=(ALL) NOPASSWD: ALL" >>/etc/sudoers
     echo "Defaults:builduser !syslog" >>/etc/sudoers
 
-    aur_build_dir=/tmp/aur-build
+    aur_build_dir="$build_work_dir/aur-build"
     mkdir -p "$aur_build_dir"
     chown builduser:builduser "$aur_build_dir" "$aur_pkgdest"
 
@@ -185,8 +197,22 @@ if [[ -f "$source_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$source_pkg_li
     url="${rest%%#*}"
     sub=""
     [[ "$rest" == *\#* ]] && sub="${rest#*#}"
+    # Reuse a package built from the same upstream commit. The package version
+    # does not change per commit (the kernel's pkgver is _major._minor), so the
+    # commit is recorded in a marker next to the package.
+    rev=$(git ls-remote "$url" HEAD 2>/dev/null | cut -f1) || true
+    marker="$aur_repo/$name.rev"
+    if [[ ${KESTREL_REBUILD_SOURCE:-0} != 1 && -n $rev ]] \
+      && compgen -G "$aur_repo/$name-[0-9]*.pkg.tar.zst" >/dev/null \
+      && [[ -f $marker && $(<"$marker") == "$rev" ]]; then
+      echo "Using cached source package: $name ($rev)"
+      printf '%s\n' "$name" >>"$build_cache_dir/packages.x86_64"
+      compgen -G "$aur_repo/$name-headers-*.pkg.tar.zst" >/dev/null &&
+        printf '%s\n' "$name-headers" >>"$build_cache_dir/packages.x86_64"
+      continue
+    fi
     echo "Building source package: $name from $url${sub:+ ($sub)}"
-    src_dir="/tmp/src/$name"
+    src_dir="$build_work_dir/src/$name"
     rm -rf "$src_dir"
     git clone --quiet "$url" "$src_dir"
     pkgbuild_dir="$src_dir/packaging/local"
@@ -194,6 +220,7 @@ if [[ -f "$source_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$source_pkg_li
     [[ -n "$sub" ]] && pkgbuild_dir="$src_dir/$sub"
     chown -R builduser:builduser "$src_dir"
     su - builduser -c "cd '$pkgbuild_dir' && PKGDEST='$aur_repo' makepkg -s -f --noconfirm --nocheck"
+    printf '%s\n' "$rev" >"$marker"
     rm -rf "$src_dir"
     printf '%s\n' "$name" >>"$build_cache_dir/packages.x86_64"
     # Kernels ship a -headers package that DKMS (NVIDIA, etc.) needs to rebuild
@@ -237,10 +264,14 @@ live_only_file="$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-live
   done
 } >"$live_only_file"
 
-# Finally, we assemble the entire ISO
+# Finally, we assemble the entire ISO. archiso's work dir persists in the
+# mounted cache and its per-step "run once" markers make a second run skip
+# every step, so a rebuild would silently reuse the previous ISO.
+rm -rf "$build_cache_dir/work/"
 mkarchiso -v -w "$build_cache_dir/work/" -o "/out/" "$build_cache_dir/"
 
-# Fix ownership of output files to match host user
+# Fix ownership of output and scratch files to match host user
 if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
   chown -R "$HOST_UID:$HOST_GID" /out/
+  [ -d /build ] && chown -R "$HOST_UID:$HOST_GID" /build
 fi

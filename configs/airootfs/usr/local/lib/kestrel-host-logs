@@ -1,0 +1,13 @@
+#!/bin/bash
+# DEV ONLY - remove before release. Mount QEMU's 9p share so shell transcripts
+# and test logs land on the host without copy/paste.
+set -euo pipefail
+dir=/mnt/kestrel-host-logs
+mountpoint -q "$dir" && exit 0
+mkdir -p "$dir"
+modprobe 9p 9pnet 9pnet_virtio 2>/dev/null || true
+mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$dir" 2>/dev/null || {
+  sleep 1
+  mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$dir" 2>/dev/null || exit 0
+}
+chmod 0777 "$dir" 2>/dev/null || true

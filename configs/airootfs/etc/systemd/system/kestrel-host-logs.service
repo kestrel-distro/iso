@@ -1,0 +1,12 @@
+[Unit]
+Description=Mount the host log share (DEV ONLY)
+After=systemd-remount-fs.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/kestrel-host-logs
+
+[Install]
+WantedBy=multi-user.target
