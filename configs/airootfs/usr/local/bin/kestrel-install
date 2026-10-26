@@ -231,7 +231,19 @@ partition_target() {
 
 copy_rootfs() {
   step "Copying the Kestrel system to disk..."
-  rsync -aHAX --numeric-ids --info=progress2 \
+  # A line every 15s is enough to show the copy is alive. rsync's own progress
+  # output is one line per update through the phase log, which reached tens of
+  # megabytes per install.
+  (
+    while :; do
+      sleep 15
+      printf 'copy: %s used on %s\n' \
+        "$(df -h --output=used "$TARGET" 2>/dev/null | tail -1 | tr -d ' ')" "$TARGET"
+    done
+  ) &
+  local hb=$!
+  local rc=0
+  rsync -aHAX --numeric-ids \
     --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run \
     --exclude=/tmp --exclude=/mnt --exclude=/media --exclude=/lost+found \
     --exclude=/var/tmp --exclude='/var/log/*' --exclude='/var/cache/*' \
@@ -239,7 +251,10 @@ copy_rootfs() {
     --exclude='/var/lib/pacman/sync/*' --exclude=/etc/machine-id \
     --exclude='/etc/ssh/ssh_host_*' --exclude=/home/kestrel \
     --exclude=/root \
-    / "$TARGET/"
+    / "$TARGET/" || rc=$?
+  kill "$hb" 2>/dev/null || true
+  wait "$hb" 2>/dev/null || true
+  return "$rc"
 }
 
 # ── Target setup (chroot) ────────────────────────────────────────────────────
@@ -275,7 +290,10 @@ run_target_setup() {
   } >"$TARGET/root/kestrel-target.env"
 
   install -Dm755 /usr/local/lib/kestrel-target-setup "$TARGET/root/kestrel-target-setup"
-  cp -f /etc/resolv.conf "$TARGET/etc/resolv.conf" 2>/dev/null || true
+  # A regular file for the chroot: the rootfs copy is the live symlink, and
+  # writing through it would write inside /run instead of /etc/resolv.conf.
+  rm -f "$TARGET/etc/resolv.conf"
+  cp -L /etc/resolv.conf "$TARGET/etc/resolv.conf" 2>/dev/null || true
 
   # Stage the throwaway LUKS key for the deferred re-key on first boot.
   if [[ -n ${KESTREL_LUKS_KEYFILE:-} ]]; then
