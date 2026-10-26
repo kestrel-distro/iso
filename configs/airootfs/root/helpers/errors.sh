@@ -35,7 +35,7 @@ show_log_tail() {
         local truncated_line="$line"
       fi
 
-      gum style "$truncated_line"
+      printf '%s\n' "$truncated_line"
     done
 
     echo
@@ -45,7 +45,7 @@ show_log_tail() {
 # Display the failed command or script name
 show_failed_script_or_command() {
   if [[ -n ${CURRENT_SCRIPT:-} ]]; then
-    gum style "Failed script: $CURRENT_SCRIPT"
+    printf 'Failed script: %s\n' "$CURRENT_SCRIPT"
   else
     # Truncate long command lines to fit the display
     local cmd="$BASH_COMMAND"
@@ -55,7 +55,7 @@ show_failed_script_or_command() {
       cmd="${cmd:0:$max_cmd_width}..."
     fi
 
-    gum style "$cmd"
+    printf '%s\n' "$cmd"
   fi
 }
 
@@ -90,15 +90,15 @@ catch_errors() {
   clear_logo
   show_cursor
 
-  gum style --foreground 1 --padding "1 0 1 $PADDING_LEFT" "Kestrel installation stopped!"
+  printf 'Kestrel installation stopped!\n'
   show_log_tail
 
-  gum style "This command halted with exit code $exit_code:"
+  printf 'This command halted with exit code %s:\n' "$exit_code"
   show_failed_script_or_command
 
-  gum style "$QR_CODE"
+  printf '%s\n' "$QR_CODE"
   echo
-  gum style "Get help from the community via QR code or at https://discord.gg/tXFUdasqhY"
+  printf 'Get help from the community via QR code or at https://discord.gg/tXFUdasqhY\n'
 
   # Offer options menu
   while true; do
@@ -113,7 +113,16 @@ catch_errors() {
     options+=("View full log")
     options+=("Exit")
 
-    choice=$(gum choose "${options[@]}" --header "What would you like to do?" --height 6 --padding "1 $PADDING_LEFT")
+    local i reply
+    for i in "${!options[@]}"; do
+      printf '%2d) %s\n' "$((i + 1))" "${options[i]}"
+    done
+    printf 'What would you like to do? ' >&2
+    IFS= read -r reply || exit 1
+    choice=""
+    if [[ $reply =~ ^[0-9]+$ ]] && ((reply >= 1 && reply <= ${#options[@]})); then
+      choice=${options[reply - 1]}
+    fi
 
     case "$choice" in
     "Retry installation")

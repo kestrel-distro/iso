@@ -11,7 +11,7 @@ home=/home/$user
 skel=/usr/local/share/kestrel-live
 
 if ! id -u "$user" >/dev/null 2>&1; then
-  useradd -m -u 1000 -G wheel,video,render,input,audio,realtime -s /bin/bash "$user"
+  useradd -m -u 1000 -G wheel,video,render,input,audio,realtime -s /usr/bin/fish "$user"
 fi
 echo "kestrel-live-init: user $user ready"
 
@@ -22,11 +22,28 @@ if [[ -d $skel ]]; then
 fi
 echo "kestrel-live-init: seeded $home (bash_profile: $(test -e "$home/.bash_profile" && echo present || echo MISSING))"
 
+# The live user logs in with fish, which never reads .bash_profile; start the
+# session from its config on tty1 instead.
+fish_config="$home/.config/fish/config.fish"
+mkdir -p "${fish_config%/*}"
+touch "$fish_config"
+if ! grep -q 'kestrel-live-session' "$fish_config"; then
+  cat >>"$fish_config" <<'FISH'
+
+# kestrel-live-session: start the desktop on the first virtual terminal.
+if status is-login; and test (tty) = /dev/tty1; and not set -q WAYLAND_DISPLAY; and not set -q KESTREL_LIVE_SESSION
+    set -gx KESTREL_LIVE_SESSION 1
+    command -q logger; and logger -t kestrel-live "starting the Hyprland session on "(tty)
+    exec uwsm start -g -1 -e -D Hyprland hyprland.desktop
+end
+FISH
+fi
+
 # The live session's Hyprland autostart is the payload's; append the live-only
 # installer notice so it fires once per session start.
 autostart="$home/.config/hypr/autostart.lua"
 if [[ -f $autostart ]] && ! grep -q 'kestrel-live-notice' "$autostart"; then
-  printf '\n-- Live ISO: point the user at the installer.\no.exec_on_start("kestrel-live-notice")\n' >>"$autostart"
+  printf '\n-- Live ISO: point the user at the installer and capture VM diagnostics.\no.exec_on_start("kestrel-live-notice")\no.exec_on_start("kestrel-vm-report")\n' >>"$autostart"
 fi
 
 # The session desktop for uwsm, pointing at the payload's copy.
@@ -39,6 +56,20 @@ printf '%s\n' "$user ALL=(ALL:ALL) NOPASSWD: ALL" >/etc/sudoers.d/kestrel-live
 chmod 440 /etc/sudoers.d/kestrel-live
 
 chown -R "$user:$user" "$home"
+
+# Zen is the preferred browser on the live session too; the installed system
+# gets the same choice in kestrel-provision-user. Without this the XDG default
+# is unset and kestrel-launch-browser falls back to Chromium.
+if command -v xdg-settings >/dev/null; then
+  if [[ -f /usr/share/applications/zen.desktop ]]; then
+    live_browser=zen.desktop
+  else
+    live_browser=chromium.desktop
+  fi
+  runuser -u "$user" -- env HOME="$home" USER="$user" \
+    XDG_DATA_DIRS=/usr/local/share:/usr/share \
+    xdg-settings set default-web-browser "$live_browser" 2>/dev/null || true
+fi
 
 # Session services the shell reads from.
 systemctl enable --now NetworkManager.service 2>/dev/null || true

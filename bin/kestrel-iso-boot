@@ -22,10 +22,23 @@ if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
   sudo pacman -S --noconfirm --needed --quiet qemu-full edk2-ovmf
 fi
 
-DISK="/tmp/kestrel-iso-boot.qcow2"
+# The disk grows as the installer copies the rootfs into it (many GB), so keep
+# it off the tmpfs /tmp where filling RAM aborts the install with vda I/O
+# errors. Prefer /data, like the ISO build scratch. Override with KESTREL_VM_DIR.
+if [[ -n "${KESTREL_VM_DIR:-}" ]]; then
+  VM_DIR="$KESTREL_VM_DIR"
+elif [[ -d /data && -w /data ]]; then
+  VM_DIR="/data/kestrel-vm"
+else
+  VM_DIR="$HOME/.cache/kestrel/vm"
+fi
+mkdir -p "$VM_DIR"
+
+DISK="$VM_DIR/kestrel-iso-boot.qcow2"
+VM_VARS="$VM_DIR/OVMF_VARS.4m.fd"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 20G
-  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
+  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$VM_VARS"
 fi
 
 # Capture everything the guest writes to its serial console, plus qemu's own
@@ -35,11 +48,22 @@ mkdir -p "$VM_LOG_DIR"
 VM_STAMP="$(date +%Y%m%d-%H%M%S)"
 VM_SERIAL_LOG="$VM_LOG_DIR/kestrel-$VM_STAMP-serial.log"
 VM_QEMU_LOG="$VM_LOG_DIR/kestrel-$VM_STAMP-qemu.log"
+echo "VM disk: $DISK"
 echo "VM logs:"
 echo "  serial: $VM_SERIAL_LOG"
 echo "  qemu:   $VM_QEMU_LOG"
 echo "  share:  $VM_LOG_DIR (guest mounts it at /mnt/kestrel-host-logs)"
 echo "VM input: hover the window to grab the keyboard and mouse; Ctrl+Alt+G releases."
+
+# virtio-vga-gl routes 3D through the host EGL driver, and the NVIDIA EGL
+# stack segfaults QEMU on this host (libnvidia-eglcore, CPMMListener). Use the
+# 2D virtio device by default; KESTREL_VM_GL=1 opts back into 3D when the host
+# driver is healthy.
+if [[ ${KESTREL_VM_GL:-0} == 1 ]]; then
+  display_args=(-device virtio-vga-gl -display gtk,gl=on,grab-on-hover=on)
+else
+  display_args=(-device virtio-vga -display gtk,gl=off,grab-on-hover=on)
+fi
 
 # Boot from ISO before we've installed, then boot from drive after
 qemu-system-x86_64 \
@@ -47,13 +71,12 @@ qemu-system-x86_64 \
   -smp "$(nproc)" \
   -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.4m.fd \
+  -drive if=pflash,format=raw,file="$VM_VARS" \
   -drive file="$DISK",format=qcow2,if=none,id=drive0 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
-  -device virtio-vga-gl \
-  -display gtk,gl=on,grab-on-hover=on \
+  "${display_args[@]}" \
   -serial "file:$VM_SERIAL_LOG" \
   -D "$VM_QEMU_LOG" \
   -virtfs local,path="$VM_LOG_DIR",mount_tag=kestrel_host_logs,security_model=none \

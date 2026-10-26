@@ -20,6 +20,19 @@ kestrel_settle_disk() {
   udevadm settle || true
 }
 
+# Wait (bounded, ~5s) for a partition node to appear, returning whether it did.
+# Partition nodes can lag the table change on a slow or 4K-sector disk; a
+# mkfs or mount against a missing node fails with a confusing superblock error.
+kestrel_wait_block_device() {
+  local dev="$1" i
+  for ((i = 0; i < 50; i++)); do
+    [[ -b $dev ]] && return 0
+    udevadm settle --timeout=1 || true
+    sleep 0.1
+  done
+  [[ -b $dev ]]
+}
+
 # Highest partition number currently in the disk's table (0 when empty).
 kestrel_last_partition_number() {
   sgdisk -p "$1" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {n=$1} END {print n+0}'

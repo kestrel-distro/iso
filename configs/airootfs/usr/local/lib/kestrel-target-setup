@@ -49,7 +49,13 @@ EOF
     printf '%s UTF-8\n' "$KESTREL_SYS_LANG" >>/etc/locale.gen
   locale-gen
 
-  printf 'KEYMAP=%s\n' "$KESTREL_KEYBOARD" >/etc/vconsole.conf
+  # Hyprland reads XKBLAYOUT (not KEYMAP); write both so the console and the
+  # desktop agree on the installer's choice.
+  {
+    printf 'KEYMAP=%s\n' "$KESTREL_KEYBOARD"
+    printf 'XKBLAYOUT=%s\n' "$KESTREL_KEYBOARD"
+    printf 'XKBMODEL=pc105\n'
+  } >/etc/vconsole.conf
 
   ln -sfn "/usr/share/zoneinfo/$KESTREL_TIMEZONE" /etc/localtime
   hwclock --systohc 2>/dev/null || true
@@ -59,7 +65,7 @@ create_user() {
   local gecos=()
   [[ -n $KESTREL_USER_NAME ]] && gecos=(-c "$KESTREL_USER_NAME")
 
-  useradd -m "${gecos[@]}" -G wheel,video,render,input,audio,realtime -s /bin/bash "$KESTREL_USER"
+  useradd -m "${gecos[@]}" -G wheel,video,render,input,audio,realtime -s /usr/bin/fish "$KESTREL_USER"
   printf '%s:%s\n' "$KESTREL_USER" "$KESTREL_PASSWORD_HASH" | chpasswd -e
   printf 'root:%s\n' "$KESTREL_PASSWORD_HASH" | chpasswd -e
 

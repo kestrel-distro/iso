@@ -5,10 +5,10 @@
 # payload's shared setup form so install and first-boot provisioning can never
 # offer different prompts.
 #
-# Side channels (gum exits only on Esc / Ctrl+C):
-#   Esc    (1)   -> unwind to the start of the form
-#   Ctrl+C (130) -> first screen: prepare for another owner (deferred);
-#                   disk confirmation: toggle disk encryption
+# Side channels:
+#   end of input (1) -> unwind to the start of the form
+#   Ctrl+C       (130) -> first screen: prepare for another owner (deferred);
+#                         disk confirmation: toggle disk encryption
 
 export KESTREL_PATH="${KESTREL_PATH:-/usr/share/kestrel}"
 export KESTREL_INSTALL="${KESTREL_INSTALL:-$KESTREL_PATH/install}"
@@ -23,15 +23,15 @@ command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
 notice() {
   clear_logo
   echo
-  gum spin --spinner "pulse" --title "$1" -- sleep "${2:-1}"
+  printf '%s\n' "$1"
+  sleep "${2:-1}"
   echo
 }
 
 step() {
   clear_logo
   echo
-  gum style --padding "1 0 0 $PADDING_LEFT" "$1"
-  echo
+  printf '%s%s\n\n' "$PADDING_LEFT_SPACES" "$1"
 }
 
 deferred=0
@@ -48,8 +48,8 @@ keyboard_form() {
     0) ;;
     130)
       deferred=1
-      keyboard="us"
-      keyboard_label="English (US)"
+      keyboard="es"
+      keyboard_label="Spanish"
       notice "Preparing this machine for another owner, keyboard and account setup will run on first boot" 3
       ;;
     *) abort "Aborted installation" ;;
@@ -126,22 +126,22 @@ disk_form() {
     disk_options+="$disk_info"$'\n'
   done <<<"$available_disks"
 
-  selected_display=$(echo "$disk_options" | gum choose --header "Select install disk") || abort "Aborted installation"
+  local -a disks=()
+  mapfile -t disks < <(printf '%s' "$disk_options" | sed '/^$/d')
+  selected_display=$(kestrel_choose "Select install disk:" "${disks[@]}") || abort "Aborted installation"
   disk=$(echo "$selected_display" | awk '{print $1}')
 
   # Full-disk wipes it; free-space installs into unallocated space alongside
   # other operating systems.
-  disk_mode=$(printf '%s\n' "full" "free-space" | gum choose --header "How should Kestrel use ${disk}?" \
-    --selected "full") || abort "Aborted installation"
+  disk_mode=$(kestrel_choose "How should Kestrel use ${disk}?" "full" "free-space") || abort "Aborted installation"
 }
 
 disk_confirm() {
   while true; do
-    gum style "Everything on ${disk} will be overwritten. There is no recovery possible."
-    echo
+    printf '%sEverything on %s will be overwritten. There is no recovery possible.\n\n' \
+      "$PADDING_LEFT_SPACES" "$disk"
     local status
-    gum confirm --affirmative "Yes, format disk" --negative "No, change it" \
-      "Confirm installing to ${disk}" && status=0 || status=$?
+    kestrel_confirm "Confirm installing to ${disk}" && status=0 || status=$?
     case $status in
       0) break ;;
       130) # Ctrl+C toggles disk encryption
@@ -166,19 +166,17 @@ while true; do
   system_form
   disk_form
 
-  echo -e "Field,Value
-Username,${username:-[deferred]}
-Password,$([[ -n ${password:-} ]] && printf '%*s' "${#password}" | tr ' ' '*' || echo [deferred])
-Hostname,$hostname
-Timezone,$timezone
-Keyboard,$keyboard_label
-Disk,$disk
-Layout,$disk_mode
-Encryption,$([[ $encrypt == 1 ]] && echo yes || echo no)" |
-    gum table -s "," -p | sed "s/^/${PADDING_LEFT_SPACES}/"
+  printf '%s%-12s %s\n' "$PADDING_LEFT_SPACES" "Username" "${username:-[deferred]}" \
+    "$PADDING_LEFT_SPACES" "Password" "$([[ -n ${password:-} ]] && printf '%*s' "${#password}" | tr ' ' '*' || echo [deferred])" \
+    "$PADDING_LEFT_SPACES" "Hostname" "${hostname}" \
+    "$PADDING_LEFT_SPACES" "Timezone" "${timezone}" \
+    "$PADDING_LEFT_SPACES" "Keyboard" "${keyboard_label}" \
+    "$PADDING_LEFT_SPACES" "Disk" "${disk}" \
+    "$PADDING_LEFT_SPACES" "Layout" "$disk_mode" \
+    "$PADDING_LEFT_SPACES" "Encryption" "$([[ $encrypt == 1 ]] && echo yes || echo no)"
 
   echo
-  if gum confirm --negative "No, change it" "Does this look right?"; then
+  if kestrel_confirm "Does this look right?"; then
     break
   fi
 done

@@ -48,6 +48,18 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
+# Heavy scratch (kernel source tree, AUR builds, mkarchiso work) goes on /data so
+# the root filesystem does not fill up during a build. Override with
+# KESTREL_BUILD_DIR.
+if [[ -n "${KESTREL_BUILD_DIR:-}" ]]; then
+  BUILD_SCRATCH="$KESTREL_BUILD_DIR"
+elif [[ -d /data && -w /data ]]; then
+  BUILD_SCRATCH="/data/kestrel-iso-build"
+else
+  BUILD_SCRATCH="$HOME/.cache/kestrel/build"
+fi
+mkdir -p "$BUILD_SCRATCH"
+
 KESTREL_INSTALLER_REPO="${KESTREL_INSTALLER_REPO:-kestrel-distro/kestrel}"
 KESTREL_INSTALLER_REF="${KESTREL_INSTALLER_REF:-main}"
 
@@ -63,6 +75,9 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/archiso:/archiso:ro"
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
+  -v "$BUILD_SCRATCH:/build"
+  -e "KESTREL_BUILD_CACHE=/build/cache"
+  -e "KESTREL_BUILD_WORK=/build/work"
 )
 
 # Use the local Kestrel checkout instead of a git clone. Defaults to the sibling
@@ -74,6 +89,13 @@ if [[ -n "${LOCAL_SOURCE-}" ]]; then
     exit 1
   }
   DOCKER_ARGS+=(-v "$LOCAL_SOURCE_PATH:/kestrel:ro")
+
+  # Ship the benchmark harness from the sibling kernel checkout, so the ISO
+  # never has to clone it from GitHub while it runs.
+  KERNEL_SOURCE_PATH="${KERNEL_PATH:-$BUILD_ROOT/../kernel}"
+  if [[ -d $KERNEL_SOURCE_PATH/bench ]]; then
+    DOCKER_ARGS+=(-v "$KERNEL_SOURCE_PATH:/kernel:ro" -e KERNEL_PATH=/kernel)
+  fi
 fi
 
 # A dedicated pacman cache, separate from the host's, so the build never reads a
@@ -112,6 +134,8 @@ if [[ -n ${VAULT_DIR:-} ]]; then
   "${BASH_SOURCE[0]%/*}/kestrel-iso-vault" "${vault_args[@]}"
   mv -f "$iso_ref.vault.iso" "$iso_ref"
 fi
+
+echo "ISO: $iso_ref"
 
 # Offer to boot the new build
 if [[ -z "$NO_BOOT_OFFER" ]]; then

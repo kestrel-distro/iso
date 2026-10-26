@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# kestrel:summary=Write live-session cursor/input diagnostics for VM bring-up
+# kestrel:group=debug
+# kestrel:hidden=true
+
+# One-shot, run from the live Hyprland autostart (kestrel-live-init). A VM is
+# often the hardest place to reproduce a cursor/input bug, so capture the state
+# before the session is touched and drop it on the host 9p share (and the
+# journal). Never fail the session.
+
+stamp=$(date +%Y%m%d-%H%M%S)
+local_report="$HOME/.cache/kestrel/vm-report-$stamp.log"
+host_dir=/mnt/kestrel-host-logs
+
+mkdir -p "${local_report%/*}" 2>/dev/null || true
+
+# startup-cursor hides the pointer for its first 15s; sample after that so the
+# report reflects the steady state the user actually sees.
+sleep 20
+
+{
+  echo "== date =="
+  date -Is
+  echo
+  echo "== virt =="
+  systemd-detect-virt 2>&1 || true
+  echo
+  echo "== session env =="
+  env | grep -E '^(XDG_SESSION_TYPE|WAYLAND_DISPLAY|HYPRLAND_INSTANCE_SIGNATURE|XCURSOR_THEME|XCURSOR_SIZE|XCURSOR_PATH|HYPRCURSOR_THEME|HYPRCURSOR_SIZE|KESTREL_PATH)=' | sort
+  echo
+  echo "== monitors =="
+  hyprctl monitors -j 2>&1 || true
+  echo
+  echo "== cursor options =="
+  for opt in cursor:invisible cursor:no_hardware_cursors cursor:enable_hyprcursor \
+    cursor:inactive_timeout cursor:hide_on_key_press cursor:hide_on_touch; do
+    printf '%s: ' "$opt"
+    hyprctl getoption "$opt" 2>&1 | tr '\n' ' '
+    echo
+  done
+  echo "cursorpos: $(hyprctl cursorpos 2>&1)"
+  echo
+  echo "== mice =="
+  hyprctl devices -j 2>/dev/null | jq -c '.mice' 2>/dev/null || hyprctl devices 2>&1 || true
+  echo
+  echo "== cursor themes =="
+  ls -l /usr/share/icons/Adwaita/cursors/left_ptr /usr/share/icons/default/index.theme 2>&1 || true
+  echo
+  echo "== hyprland config =="
+  ls -la "$HOME/.config/hypr" 2>&1 || true
+  for opt in input:kb_layout input:repeat_rate general:gaps_in general:gaps_out; do
+    printf '%s: ' "$opt"
+    hyprctl getoption "$opt" 2>&1 | tr '\n' ' '
+    echo
+  done
+  echo
+  echo "== ocr =="
+  for cmd in hyprpicker slurp grim tesseract wl-copy; do
+    printf '%s: ' "$cmd"
+    command -v "$cmd" || echo missing
+  done
+  tesseract --list-langs 2>&1 | head -10 || true
+  ls -la "$HOME/.config/kestrel/extensions" 2>&1 || true
+  echo
+  echo "== capture binds =="
+  hyprctl binds 2>/dev/null | grep -iE 'print|capture' | head -20 || true
+  echo
+  echo "== last install log (if any) =="
+  tail -40 /var/log/kestrel-install.log 2>/dev/null || true
+} >"$local_report" 2>&1
+
+# The installer mounts this share for its own logs; mount it here too when the
+# session starts outside an install. Best-effort and root-only.
+sudo -n mkdir -p "$host_dir" 2>/dev/null || true
+if ! mountpoint -q "$host_dir" 2>/dev/null; then
+  sudo -n modprobe 9p 9pnet 9pnet_virtio 2>/dev/null || true
+  sudo -n mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$host_dir" 2>/dev/null ||
+    { sleep 1; sudo -n mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$host_dir" 2>/dev/null; } ||
+    true
+fi
+if mountpoint -q "$host_dir" 2>/dev/null; then
+  sudo -n cp -f "$local_report" "$host_dir/" 2>/dev/null ||
+    cp -f "$local_report" "$host_dir/" 2>/dev/null || true
+fi
+
+logger -t kestrel-vm-report "wrote $local_report"

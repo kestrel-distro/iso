@@ -36,6 +36,9 @@ pacman --noconfirm -Sy >/dev/null
 mapfile -t releng_pkgs <"$build_cache_dir/packages.x86_64"
 : >"$build_cache_dir/packages.x86_64"
 for pkg in "${releng_pkgs[@]}"; do
+  # The Kestrel kernel replaces Arch's. With both installed, the staged
+  # /boot/vmlinuz-linux (and therefore the ISO) ends up being the unpatched one.
+  [[ $pkg == linux ]] && continue
   if pacman -Si "$pkg" >/dev/null 2>&1; then
     printf '%s\n' "$pkg" >>"$build_cache_dir/packages.x86_64"
   else
@@ -85,7 +88,7 @@ cp "$build_work_dir/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 # Live environment packages: releng set plus the full Kestrel desktop, so the
 # ISO boots to a graphical Hyprland + Quickshell session and the copied rootfs
 # is a complete installed system.
-arch_packages=(linux git gum jq openssl plymouth)
+arch_packages=(git gum jq openssl plymouth)
 mapfile -t kestrel_desktop < <(grep -hvE '^[[:space:]]*(#|$)' \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-base.packages" \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-other.packages")
@@ -238,6 +241,16 @@ if [[ -f "$source_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$source_pkg_li
     printf '\n[aur]\nSigLevel = Optional TrustAll\nServer = file://%s/\n' "$aur_repo" \
       >>"$build_cache_dir/pacman.conf"
   fi
+fi
+
+# Benchmark harness from the local kernel checkout. kestrel-bench prefers this
+# path over cloning, so the ISO works offline and carries the same bench code
+# as the kernel repository being tested.
+if [[ -d ${KERNEL_PATH:-/kernel}/bench ]]; then
+  rm -rf "$build_cache_dir/airootfs/usr/share/kestrel-bench"
+  install -d "$build_cache_dir/airootfs/usr/share/kestrel-bench"
+  cp -a "${KERNEL_PATH:-/kernel}/bench" "$build_cache_dir/airootfs/usr/share/kestrel-bench/bench"
+  chmod +x "$build_cache_dir"/airootfs/usr/share/kestrel-bench/bench/*
 fi
 
 # Live-only packages: everything the releng live set adds on top of the

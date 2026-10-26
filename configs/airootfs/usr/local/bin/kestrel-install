@@ -4,7 +4,7 @@
 # filesystem to it (the casper/anaconda model). Launched from the Super + D menu
 # ("Install Kestrel").
 
-set -euo pipefail
+set -Eeuo pipefail
 
 if (( EUID != 0 )); then
   echo "kestrel-install must run as root (use sudo)." >&2
@@ -21,6 +21,53 @@ source /root/helpers/all.sh
 TARGET=/mnt
 CRYPT_NAME=cryptroot
 
+# The VM host shares its log directory as a 9p mount tagged kestrel_host_logs.
+# Write the installer log there from the start: a freeze or a killed terminal
+# never reaches the EXIT trap, and a log that only exists on the live overlay is
+# lost with the session. Falls back to /var/log when the share is absent.
+# Mount it under /run, never /mnt: the install target is mounted on /mnt, which
+# would hide the share halfway through and send the log into the target disk.
+KESTREL_HOST_LOG_DIR=/run/kestrel-host-logs
+mount_host_logs() {
+  mkdir -p "$KESTREL_HOST_LOG_DIR"
+  # The session service usually already mounted the tag on /mnt. Bind that
+  # mount under /run so overmounting the install target on /mnt cannot hide it.
+  if mountpoint -q /mnt/kestrel-host-logs 2>/dev/null; then
+    mountpoint -q "$KESTREL_HOST_LOG_DIR" 2>/dev/null ||
+      mount --bind /mnt/kestrel-host-logs "$KESTREL_HOST_LOG_DIR" 2>/dev/null || true
+    return
+  fi
+  modprobe 9p 9pnet 9pnet_virtio 2>/dev/null || true
+  if ! mountpoint -q "$KESTREL_HOST_LOG_DIR" 2>/dev/null; then
+    mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$KESTREL_HOST_LOG_DIR" 2>/dev/null ||
+      { sleep 1; mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$KESTREL_HOST_LOG_DIR" 2>/dev/null; } ||
+      true
+  fi
+}
+mount_host_logs
+if mountpoint -q "$KESTREL_HOST_LOG_DIR" 2>/dev/null; then
+  KESTREL_INSTALL_LOG_FILE="$KESTREL_HOST_LOG_DIR/kestrel-install.log"
+fi
+: >"$KESTREL_INSTALL_LOG_FILE"
+if [[ $KESTREL_INSTALL_LOG_FILE != /var/log/kestrel-install.log ]]; then
+  ln -sfn "$KESTREL_INSTALL_LOG_FILE" /var/log/kestrel-install.log
+fi
+
+# A dev bench may leave the live session on scx_kestrel. Copying the rootfs
+# under an experimental scheduler has frozen before; install on the loader's
+# default.
+command -v scxctl >/dev/null && scxctl restore >/dev/null 2>&1 || true
+
+# Leave the live environment clean after a failed (or aborted) install. Like the
+# Calamares umount module in emergency mode: stop swap, unmount the target, and
+# close the LUKS mapper, so a retry does not hit "device in use" / "kernel is
+# still using the old partition table". Idempotent.
+teardown_target() {
+  umount -R "$TARGET" 2>/dev/null || true
+  cryptsetup close "$CRYPT_NAME" 2>/dev/null || true
+  swapoff -a 2>/dev/null || true
+}
+
 # Tokyo Night colors for the installer's virtual console.
 set_tokyo_night_colors() {
   [[ $(tty) == "/dev/tty"* ]] || return 0
@@ -36,7 +83,7 @@ set_tokyo_night_colors() {
 step() {
   clear_logo
   echo
-  gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "$1"
+  printf '%s%s\n\n' "$PADDING_LEFT_SPACES" "$1"
   echo
 }
 
@@ -64,7 +111,7 @@ read_answers() {
   KESTREL_DISK_MODE="$(jq -r '.kestrel_disk_mode // "full"' "$config")"
   HOSTNAME="$(jq -r '.hostname // "kestrel"' "$config")"
   TIMEZONE="$(jq -r '.timezone // "UTC"' "$config")"
-  KEYBOARD="$(jq -r '.locale_config.kb_layout // "us"' "$config")"
+  KEYBOARD="$(jq -r '.locale_config.kb_layout // "es"' "$config")"
   SYS_LANG="$(jq -r '.locale_config.sys_lang // "en_US.UTF-8"' "$config")"
 
   KESTREL_USER_NAME="$(cat /root/user_full_name.txt 2>/dev/null || true)"
@@ -94,13 +141,23 @@ read_answers() {
 
 run_configurator() {
   set_tokyo_night_colors
-  (cd /root && ./configurator)
+  # The installer log used to start only at the first phase, so a configurator
+  # that exited non-zero left an empty log and no evidence of why. Record its
+  # status and stderr, and never let a silent failure through.
+  local status=0
+  (cd /root && ./configurator 2> >(tee -a "$KESTREL_INSTALL_LOG_FILE" >&2)) || status=$?
+  ((status == 0)) || abort "Configurator exited with status $status"
 }
 
 # ── Partition + mount ────────────────────────────────────────────────────────
 
 partition_target() {
   step "Partitioning $DISK..."
+
+  # A previous attempt (or a manual mount) can leave the target mounted and the
+  # mapper open; the kernel then refuses to re-read the table.
+  teardown_target
+  kestrel_settle_disk "$DISK"
 
   if [[ $KESTREL_DISK_MODE == "free-space" ]]; then
     local region
@@ -148,8 +205,24 @@ partition_target() {
   mount -o compress=zstd,subvol=@log "$ROOT_DEV" "$TARGET/var/log"
   mount -o compress=zstd,subvol=@pkg "$ROOT_DEV" "$TARGET/var/cache/pacman/pkg"
 
-  mkfs.fat -F32 -n KESTREL "$ESP_PART"
-  mount "$ESP_PART" "$TARGET/boot"
+  # The partition nodes can lag the sgdisk table (slow disk, 4K sectors): a
+  # mkfs.fat against a node the kernel has not finished re-reading writes to
+  # the wrong range, and the following mount then reports no superblock
+  # ("Can't find a ... superblock on vda2"). Re-settle, wait for the node,
+  # format, and assert the vfat superblock actually landed before mounting.
+  local esp_attempt
+  for esp_attempt in 1 2; do
+    kestrel_settle_disk "$DISK"
+    kestrel_wait_block_device "$ESP_PART" || abort "ESP $ESP_PART never appeared"
+    mkfs.fat -F32 -n KESTREL "$ESP_PART"
+    if [[ $(blkid -s TYPE -o value "$ESP_PART") == vfat ]]; then
+      break
+    fi
+    ((esp_attempt == 1)) || abort "ESP $ESP_PART has no vfat superblock after mkfs.fat"
+    blockdev --rereadpt "$DISK" 2>/dev/null || partprobe "$DISK" 2>/dev/null || true
+    udevadm settle || true
+  done
+  mount -t vfat "$ESP_PART" "$TARGET/boot"
 
   ESP_UUID="$(blkid -s UUID -o value "$ESP_PART")"
 }
@@ -173,6 +246,14 @@ copy_rootfs() {
 
 run_target_setup() {
   step "Configuring the installed system..."
+
+  # The rootfs copy excludes the pseudo-filesystems and mount points, so they do
+  # not exist in the target. arch-chroot bind-mounts /dev, /proc, /sys and /run
+  # and needs those directories present, and /root (also excluded) holds the
+  # chroot setup script.
+  install -d "$TARGET"/{proc,sys,dev,run,mnt,media}
+  install -d -m1777 "$TARGET/tmp" "$TARGET/var/tmp"
+  install -d -m700 "$TARGET/root"
 
   # Hand the answers to the in-chroot script.
   {
@@ -229,26 +310,37 @@ finish() {
 run_logged_phase() {
   start_log_output
   CURRENT_SCRIPT="$1"
-  "$1" > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE") 2>&1
+  "$1" > >(stdbuf -o0 tr '\r' '\n' | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE") 2>&1
   unset CURRENT_SCRIPT
   stop_log_output
 }
 
 touch "$KESTREL_INSTALL_LOG_FILE"
 
-# The Kestrel VM helper shares the host log directory as a 9p mount tagged
-# kestrel_host_logs. Mirror the installer log there (and into the target) so a
-# failed install can still be read from the host or the installed system.
-KESTREL_HOST_LOG_DIR=/mnt/kestrel-host-logs
 mirror_install_log() {
   install -Dm644 "$KESTREL_INSTALL_LOG_FILE" "$TARGET/var/log/kestrel-install.log" 2>/dev/null || true
-  mkdir -p "$KESTREL_HOST_LOG_DIR"
-  if mountpoint -q "$KESTREL_HOST_LOG_DIR" ||
-    mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$KESTREL_HOST_LOG_DIR" 2>/dev/null; then
-    cp -f "$KESTREL_INSTALL_LOG_FILE" "$KESTREL_HOST_LOG_DIR/" 2>/dev/null || true
+  mount_host_logs
+  if mountpoint -q "$KESTREL_HOST_LOG_DIR" 2>/dev/null; then
+    # The phase output reaches the log through an asynchronous tee while the
+    # ERR/abort lines are appended directly. Let the writers drain before the
+    # copy so a failure does not mirror a truncated log.
+    sleep 0.3
+    if [[ $KESTREL_INSTALL_LOG_FILE != "$KESTREL_HOST_LOG_DIR/kestrel-install.log" ]]; then
+      cp -f "$KESTREL_INSTALL_LOG_FILE" "$KESTREL_HOST_LOG_DIR/" 2>/dev/null || true
+    fi
+    # Snapshot the disk/mount state too, while the failed target is still mounted.
+    {
+      echo "== $(date -Is) =="
+      lsblk -f
+      cryptsetup status "$CRYPT_NAME" 2>&1
+      mount | grep -F "$TARGET" 2>/dev/null
+      echo "== journal =="
+      journalctl -b -n 200 --no-pager 2>&1
+    } >"$KESTREL_HOST_LOG_DIR/kestrel-install-state.log" 2>&1 || true
   fi
 }
-trap mirror_install_log EXIT
+trap 'rc=$?; printf "[%s] ERROR rc=%d %s line %s: %s\n" "$(date +%T)" "$rc" "${BASH_SOURCE[0]##*/}" "$LINENO" "$BASH_COMMAND" >>"$KESTREL_INSTALL_LOG_FILE" || true' ERR
+trap 'mirror_install_log; teardown_target' EXIT
 
 run_configurator
 read_answers
