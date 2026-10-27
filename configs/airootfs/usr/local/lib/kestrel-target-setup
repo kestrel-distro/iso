@@ -197,9 +197,9 @@ stage_deferred() {
 write_limine_config() {
   local cmdline
   if ((KESTREL_ENCRYPTED)); then
-    cmdline="cryptdevice=UUID=$KESTREL_LUKS_UUID:cryptroot root=/dev/mapper/cryptroot rootflags=subvol=@"
+    cmdline="rd.luks.name=$KESTREL_LUKS_UUID=cryptroot root=/dev/mapper/cryptroot rootflags=subvol=@"
     if ((KESTREL_DEFER)); then
-      cmdline+=" cryptkey=rootfs:/etc/kestrel/provisioning.key"
+      cmdline+=" rd.luks.key=$KESTREL_LUKS_UUID=/etc/kestrel/provisioning.key"
     fi
   else
     cmdline="root=$KESTREL_ROOT_PART rootflags=subvol=@"
