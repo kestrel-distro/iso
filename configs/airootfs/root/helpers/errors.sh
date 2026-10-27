@@ -84,7 +84,6 @@ catch_errors() {
   # Store exit code immediately before it gets overwritten
   local exit_code=$?
 
-  stop_log_output
   restore_outputs
 
   clear_logo
@@ -150,7 +149,6 @@ exit_handler() {
   if [[ $exit_code -ne 0 && $ERROR_HANDLING != true ]]; then
     catch_errors
   else
-    stop_log_output
     show_cursor
   fi
 }

@@ -322,11 +322,14 @@ finish() {
 }
 
 run_logged_phase() {
-  start_log_output
+  # Full phase output goes to the terminal; the log gets the same text with
+  # CR progress rewritten and ANSI stripped. No tail monitor: it would
+  # overwrite the live output and hide prompts.
   CURRENT_SCRIPT="$1"
-  "$1" > >(stdbuf -o0 tr '\r' '\n' | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE") 2>&1
+  local rc=0
+  "$1" 2>&1 | tee >(stdbuf -o0 tr '\r' '\n' | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE") || rc=$?
   unset CURRENT_SCRIPT
-  stop_log_output
+  return "$rc"
 }
 
 touch "$KESTREL_INSTALL_LOG_FILE"

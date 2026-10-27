@@ -217,7 +217,9 @@ build_boot() {
   rm -f /etc/mkinitcpio.conf.d/archiso.conf /etc/mkinitcpio.d/linux.preset
   sed "s|%PKGBASE%|linux|g" /usr/share/mkinitcpio/hook.preset >/etc/mkinitcpio.d/linux.preset
   [[ -e /boot/vmlinuz-linux ]] || install -Dm644 "$(echo /usr/lib/modules/*/vmlinuz)" /boot/vmlinuz-linux
-  mkinitcpio -P
+  # Bypass the limine-mkinitcpio wrapper (installed by the AUR hook), which
+  # prompts interactively. build_boot runs limine-mkinitcpio itself below.
+  /usr/bin/mkinitcpio -P </dev/null
 
   if [[ -d /sys/firmware/efi ]]; then
     limine-install
