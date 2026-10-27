@@ -290,10 +290,6 @@ run_target_setup() {
   } >"$TARGET/root/kestrel-target.env"
 
   install -Dm755 /usr/local/lib/kestrel-target-setup "$TARGET/root/kestrel-target-setup"
-  # A regular file for the chroot: the rootfs copy is the live symlink, and
-  # writing through it would write inside /run instead of /etc/resolv.conf.
-  rm -f "$TARGET/etc/resolv.conf"
-  cp -L /etc/resolv.conf "$TARGET/etc/resolv.conf" 2>/dev/null || true
 
   # Stage the throwaway LUKS key for the deferred re-key on first boot.
   if [[ -n ${KESTREL_LUKS_KEYFILE:-} ]]; then

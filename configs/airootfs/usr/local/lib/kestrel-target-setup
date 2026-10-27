@@ -154,11 +154,9 @@ strip_live_only() {
     /usr/local/bin/livecd-sound /root/.automated_script.sh /root/.zlogin
   rm -rf /usr/local/share/livecd-sound /etc/systemd/system/cloud-init.target.wants
 
-  # systemd-resolved owns resolv.conf on the installed system. The rootfs copy
-  # already carries the live symlink, and `ln -sfn` treats that as "same file"
-  # and fails; replace it outright.
-  rm -f /etc/resolv.conf
-  ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  # /etc/resolv.conf is bind-mounted by arch-chroot for the duration of setup,
+  # so it must not be touched here. The rootfs copy already carries systemd-
+  # resolved's symlink for the installed system.
 
   # Live credentials never reach the target.
   [[ -n ${KESTREL_USER:-} ]] && userdel "$KESTREL_USER" 2>/dev/null || true
