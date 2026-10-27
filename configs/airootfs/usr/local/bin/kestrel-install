@@ -327,7 +327,11 @@ run_logged_phase() {
   # overwrite the live output and hide prompts.
   CURRENT_SCRIPT="$1"
   local rc=0
-  "$1" 2>&1 | tee >(stdbuf -o0 tr '\r' '\n' | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE") || rc=$?
+  # Keep the phase in this shell: partition_target and friends export their
+  # results (ROOT_DEV, ESP_UUID, ...) to the later phases. A pipeline would run
+  # the phase in a subshell and lose them. The process substitution's tee
+  # mirrors raw output to the terminal and the stripped copy to the log.
+  "$1" > >(stdbuf -o0 tee >(stdbuf -o0 tr '\r' '\n' | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$KESTREL_INSTALL_LOG_FILE")) 2>&1 || rc=$?
   unset CURRENT_SCRIPT
   return "$rc"
 }
