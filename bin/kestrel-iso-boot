@@ -2,25 +2,93 @@
 
 set -e
 
-ISO="$1"
-REUSE="$2"
+die() {
+  echo "$*" >&2
+  exit 1
+}
 
-if [ $# -eq 0 ]; then
+usage() {
+  cat <<EOF
+Usage: kestrel-iso-boot [options] [release/kestrel.iso] [reuse]
+
+Options:
+  --name NAME       VM instance name (default: ${KESTREL_VM_NAME:-default})
+  --ssh-port PORT   host SSH port (default: first free from 2222)
+  --no-ssh          do not forward SSH
+  --reuse           reuse this instance's disk (same as the positional 'reuse')
+  -h, --help        show this help
+
+Each name gets its own disk, OVMF vars and lock, so several VMs can run at
+once; the SSH port is chosen automatically when 2222 is taken.
+EOF
+}
+
+ISO=""
+REUSE=""
+NAME="${KESTREL_VM_NAME:-default}"
+SSH_PORT="${KESTREL_VM_SSH_PORT:-}"
+NO_SSH=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --name)
+      [[ -n ${2:-} ]] || die "--name needs a value"
+      NAME=$2
+      shift 2
+      ;;
+    --ssh-port)
+      [[ -n ${2:-} ]] || die "--ssh-port needs a value"
+      SSH_PORT=$2
+      shift 2
+      ;;
+    --no-ssh)
+      NO_SSH=1
+      shift
+      ;;
+    --reuse)
+      REUSE="reuse"
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    reuse)
+      REUSE="reuse"
+      shift
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      if [[ -z $ISO ]]; then
+        ISO=$1
+      else
+        die "unexpected argument: $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z $ISO ]]; then
   ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
   if gum confirm --default=false "Reuse existing disk?"; then
     REUSE="reuse"
   fi
 fi
 
-if [ -z "$ISO" ]; then
-  echo "Usage: kestrel-iso-boot [release/kestrel.iso] [reuse]"
-  echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh)"
+if [[ -z $ISO ]]; then
+  usage
   exit 1
 fi
 
 if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
   sudo pacman -S --noconfirm --needed --quiet qemu-full edk2-ovmf
 fi
+
+[[ $NAME =~ ^[A-Za-z0-9._-]+$ && $NAME != . && $NAME != .. ]] ||
+  die "invalid VM name: $NAME"
 
 # The disk grows as the installer copies the rootfs into it (many GB), so keep
 # it off the tmpfs /tmp where filling RAM aborts the install with vda I/O
@@ -34,8 +102,34 @@ else
 fi
 mkdir -p "$VM_DIR"
 
-DISK="$VM_DIR/kestrel-iso-boot.qcow2"
-VM_VARS="$VM_DIR/OVMF_VARS.4m.fd"
+DISK="$VM_DIR/kestrel-$NAME.qcow2"
+VM_VARS="$VM_DIR/OVMF_VARS-$NAME.4m.fd"
+
+# One instance per name. Hold the lock for the QEMU lifetime; a second launch
+# with the same name refuses instead of resetting a disk in use.
+exec 9>"$DISK.lock"
+flock -n 9 || die "VM instance '$NAME' is already running (lock: $DISK.lock)"
+
+port_in_use() {
+  ss -ltn 2>/dev/null | awk 'NR > 1 {print $4}' | grep -qE "[:.]$1$"
+}
+
+if ((NO_SSH)); then
+  SSH_PORT=""
+elif [[ -n $SSH_PORT ]]; then
+  port_in_use "$SSH_PORT" && die "SSH port $SSH_PORT is already in use"
+else
+  for port in $(seq 2222 2322); do
+    if ! port_in_use "$port"; then
+      SSH_PORT="$port"
+      break
+    fi
+  done
+  [[ -n $SSH_PORT ]] || die "no free SSH port in 2222-2322"
+fi
+
+# Only reset the disk after the port/name checks have passed, so a failed
+# second launch cannot wipe a disk the first VM is using.
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 20G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$VM_VARS"
@@ -46,13 +140,19 @@ fi
 VM_LOG_DIR="${KESTREL_VM_LOG_DIR:-$HOME/.cache/kestrel/vm-logs}"
 mkdir -p "$VM_LOG_DIR"
 VM_STAMP="$(date +%Y%m%d-%H%M%S)"
-VM_SERIAL_LOG="$VM_LOG_DIR/kestrel-$VM_STAMP-serial.log"
-VM_QEMU_LOG="$VM_LOG_DIR/kestrel-$VM_STAMP-qemu.log"
+VM_SERIAL_LOG="$VM_LOG_DIR/kestrel-$NAME-$VM_STAMP-serial.log"
+VM_QEMU_LOG="$VM_LOG_DIR/kestrel-$NAME-$VM_STAMP-qemu.log"
+echo "VM instance: $NAME"
 echo "VM disk: $DISK"
 echo "VM logs:"
 echo "  serial: $VM_SERIAL_LOG"
 echo "  qemu:   $VM_QEMU_LOG"
 echo "  share:  $VM_LOG_DIR (guest mounts it at /mnt/kestrel-host-logs)"
+if ((NO_SSH)); then
+  echo "VM SSH: disabled"
+else
+  echo "VM SSH: ssh -p $SSH_PORT root@localhost (after installing openssh)"
+fi
 echo "VM input: hover the window to grab the keyboard and mouse; Ctrl+Alt+G releases."
 
 # virtio-vga-gl routes 3D through the host EGL driver, and the NVIDIA EGL
@@ -63,6 +163,12 @@ if [[ ${KESTREL_VM_GL:-0} == 1 ]]; then
   display_args=(-device virtio-vga-gl -display gtk,gl=on,grab-on-hover=on)
 else
   display_args=(-device virtio-vga -display gtk,gl=off,grab-on-hover=on)
+fi
+
+if ((NO_SSH)); then
+  net_args=(-netdev user,id=net0)
+else
+  net_args=(-netdev "user,id=net0,hostfwd=tcp::$SSH_PORT-:22")
 fi
 
 # Boot from ISO before we've installed, then boot from drive after
@@ -81,6 +187,6 @@ qemu-system-x86_64 \
   -D "$VM_QEMU_LOG" \
   -virtfs local,path="$VM_LOG_DIR",mount_tag=kestrel_host_logs,security_model=none \
   -usb -device usb-tablet \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+  "${net_args[@]}" \
   -device virtio-net-pci,netdev=net0 \
   -boot menu=on

@@ -75,13 +75,19 @@ repository HEAD.
 ## Testing the ISO
 
 ```bash
-./bin/kestrel-iso-boot release/<image>.iso
+./bin/kestrel-iso-boot [--name NAME] [--ssh-port PORT|--no-ssh] release/<image>.iso
 ```
 
 The helper installs `qemu-full` and `edk2-ovmf` if missing, creates a 20 GiB
 scratch disk under `/data/kestrel-vm`, and boots under UEFI. It captures the
 serial console, qemu log and a host 9p share in `~/.cache/kestrel/vm-logs/`; the
 guest mounts the share at `/mnt/kestrel-host-logs`.
+
+Each `--name` is a separate instance with its own disk (`kestrel-<name>.qcow2`),
+OVMF vars and lock, so several VMs can run at once. The SSH forward picks the
+first free port from 2222 upward and prints it; use `--ssh-port` to pin one or
+`--no-ssh` to omit it. Reusing the same name while it is running is refused
+rather than resetting the disk.
 
 The VM display defaults to the 2D `virtio-vga` device. `virtio-vga-gl` routes 3D
 through the host EGL driver and has crashed QEMU in `libnvidia-eglcore`; use
