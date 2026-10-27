@@ -306,6 +306,7 @@ finalize_user() {
   step "Finalizing the user account..."
   arch-chroot -u "$KESTREL_USER" "$TARGET" \
     env USER="$KESTREL_USER" HOME="/home/$KESTREL_USER" KESTREL_FIRST_INSTALL=1 \
+    KESTREL_LOG_TO_STDOUT=1 \
     PATH="$KESTREL_PATH/bin:/usr/local/sbin:/usr/local/bin:/usr/bin" \
     kestrel finalize user --first-install
 }
