@@ -1,51 +1,114 @@
 # Kestrel ISO
 
-Builds the Kestrel live ISO: the image you boot to try Kestrel and to install it.
+Builds the Kestrel live image: the graphical session you boot to try Kestrel and
+to install it.
 
-The live session is a full Kestrel desktop, not a text installer. The installer writes the running system to the target disk by copying it, so the machine you end up with is the machine you were just using. This is the casper/anaconda model rather than the Arch package-by-package model, and it is deliberate: there is no second definition of "what Kestrel is" to drift from the one you tested, and no package repository has to ride along on the medium.
+The live session is a full Kestrel desktop, not a text installer. The installer
+writes the running system to the target disk by copying it, so the machine you
+end up with is the machine you were just using. This is the casper/anaconda
+model rather than the Arch package-by-package model: there is no second
+definition of "what Kestrel is" to drift from the one you tested, and no package
+repository has to ride along on the medium.
+
+The live image boots `linux-kestrel` (the stock Arch kernel is not in the
+package set). It carries the hint bridge, `scx_kestrel`, the shared foot server
+and the desktop defaults.
 
 ## How an install works
 
-- The ISO boots the Kestrel desktop as a dedicated `kestrel` live user (autologin, passwordless sudo).
-- "Install Kestrel" lives at the root of the Super + D menu; it runs the configurator, then partitions the disk, copies the root filesystem, personalizes it (hostname, locale, user, bootloader), and reboots.
-- Encryption is on by default. The same wizard can install without encryption, install into free space alongside another OS, or prepare the machine for a different owner and defer account setup to first boot.
-- Everything needed to install is already in the image. The only network the live session might use is optional: hardware-specific packages the installer detects it needs.
+- The ISO boots the Kestrel desktop as a dedicated `kestrel` live user
+  (autologin, passwordless sudo, fish login shell).
+- **Install Kestrel** is at the root of the Super+D menu. The configurator asks
+  for keyboard, account, hostname, timezone and disk with plain numbered/text
+  prompts, then installs.
+- The wizard can install encrypted (default), unencrypted, into free space
+  alongside another OS, or prepare the machine for another owner and defer
+  account setup to first boot.
+- The installer partitions (GPT: bios_grub + ESP + root), sets up LUKS2 + Btrfs
+  subvolumes (`@`, `@home`, `@log`, `@pkg`), copies the live rootfs, runs the
+  target setup in a chroot (locale, user, bootloader, initramfs) and reboots.
+- The install log is written live to the VM host share
+  (`/mnt/kestrel-host-logs/kestrel-install.log`) from the first prompt, so a
+  freeze or a killed terminal leaves the last phase behind. On real hardware it
+  stays at `/var/log/kestrel-install.log`.
+- Nothing is installed from a network repository. Everything the installer
+  needs is in the image; the live session may use the network only for optional
+  hardware-specific packages.
 
 ## Creating the ISO
 
-Run `./bin/kestrel-iso-make`; the output lands in `./release`.
+```bash
+./bin/kestrel-iso-make                 # build release/<name>.iso
+./bin/kestrel-iso-make --local-source   # build from ../kestrel and ../kernel
+./bin/kestrel-iso-make --no-boot-offer
+```
 
-The builder needs network access. It upgrades its Arch container, resolves the Arch package set from the payload's `install/*.packages` files, builds the AUR and source packages the payload needs (`trustsight` is built from its GitHub source), downloads the bundled Node tarball, and assembles the squashfs and boot loaders.
+The builder runs `builder/build-iso.sh` inside an `archlinux/archlinux`
+container. It upgrades the container, resolves the Arch package set from the
+payload's `install/*.packages`, builds the AUR and source packages the payload
+needs, downloads the bundled Node tarball, and assembles the squashfs and boot
+loaders.
 
-`--local-source` builds from the sibling `../kestrel` checkout (the default when that directory exists) instead of cloning the payload. `--no-cache` ignores the caches described below. `--no-boot-offer` skips the prompt to boot the result.
+`--local-source` builds the payload from the sibling `../kestrel` checkout
+(default when it exists) instead of cloning, mounts the sibling `../kernel`
+checkout as `/kernel`, and ships its `bench/` harness under
+`/usr/share/kestrel-bench/bench`. The live bench then never clones from GitHub.
+`--no-cache` ignores the caches; `--no-boot-offer` skips the boot prompt.
 
-Caches live under `~/.cache/kestrel/`: `pacman-pkg/` for Arch packages, and `aur-packages/` for the AUR and source builds. They persist across runs, so repeat builds are much faster; a complete AUR cache skips the AUR build entirely.
+Caches live under `~/.cache/kestrel/`: `pacman-pkg/` for Arch packages and
+`aur-packages/` for AUR/source builds. They persist across runs; a complete
+cache skips the corresponding build. The kernel source package is reused when
+`/data/kestrel-iso-build/work/aur-repo/linux-kestrel.rev` matches the kernel
+repository HEAD.
 
 ### Environment variables
 
-- `KESTREL_INSTALLER_REPO` the GitHub repository for the payload (default: `kestrel-distro/kestrel`).
-- `KESTREL_INSTALLER_REF` the git ref (branch or tag) for the payload (default: `main`). Ignored with `--local-source`.
+| Variable | Meaning |
+|---|---|
+| `KESTREL_PATH` | Payload checkout used with `--local-source` (default `../kestrel`). |
+| `KERNEL_PATH` | Kernel checkout mounted for the bench harness (default `../kernel`). |
+| `KESTREL_INSTALLER_REPO` | GitHub payload repository (default `kestrel-distro/kestrel`). |
+| `KESTREL_INSTALLER_REF` | Payload git ref (default `main`); ignored with `--local-source`. |
+| `KESTREL_BUILD_DIR` | Heavy scratch directory (default `/data/kestrel-iso-build`). |
+| `KESTREL_VM_GL` | Set to `1` on `kestrel-iso-boot` to use `virtio-vga-gl`. |
+
+## Testing the ISO
 
 ```bash
-KESTREL_INSTALLER_REPO="myuser/kestrel-fork" KESTREL_INSTALLER_REF="some-feature" ./bin/kestrel-iso-make
+./bin/kestrel-iso-boot release/<image>.iso
+```
+
+The helper installs `qemu-full` and `edk2-ovmf` if missing, creates a 20 GiB
+scratch disk under `/data/kestrel-vm`, and boots under UEFI. It captures the
+serial console, qemu log and a host 9p share in `~/.cache/kestrel/vm-logs/`; the
+guest mounts the share at `/mnt/kestrel-host-logs`.
+
+The VM display defaults to the 2D `virtio-vga` device. `virtio-vga-gl` routes 3D
+through the host EGL driver and has crashed QEMU in `libnvidia-eglcore`; use
+`KESTREL_VM_GL=1` only on a host where that path is known good. This is the only
+supported way to exercise an install: do not run the installer against your own
+machine.
+
+## Signing and releasing
+
+```bash
+./bin/kestrel-iso-sign [gpg-user] [release/iso]   # detached signature
+./bin/kestrel-iso-release                          # build + sign + checksum
+./bin/kestrel-iso-flash <iso>                      # write to USB (+ vault COW)
 ```
 
 ## Repository layout
 
-- `builder/build-iso.sh` the build, run inside an `archlinux/archlinux` container.
-- `configs/` the archiso profile and the airootfs overlay: `profiledef.sh`, the boot loader configs, and the live-only files under `airootfs/` (the installer, the configurator, the live init, and the pre-boot seed).
-- `bin/` the driver scripts: `kestrel-iso-make`, `kestrel-iso-boot`, `kestrel-iso-sign`, `kestrel-iso-release`.
-- `archiso/` a vendored copy of upstream archiso, pinned as a submodule.
-- `release/` build output (ignored by git).
-
-## Testing the ISO
-
-Run `./bin/kestrel-iso-boot`. It installs `qemu-full` and `edk2-ovmf` if they are missing, then boots the ISO under UEFI with a scratch disk attached. This is the only supported way to exercise an install: do not run the installer against your own machine.
-
-## Signing and releasing
-
-- `./bin/kestrel-iso-sign [gpg-user] [release/iso]` signs the image.
-- `./bin/kestrel-iso-release` builds, signs, and prints the checksum.
+| Path | Contents |
+|---|---|
+| `builder/build-iso.sh` | the in-container build |
+| `configs/` | archiso profile, boot configs, live-only airootfs files (installer, configurator, live init, VM report) |
+| `configs/airootfs/root/configurator` | the interactive answers wizard |
+| `configs/airootfs/usr/local/bin/kestrel-install` | partitioning, copy, target setup, logging |
+| `configs/airootfs/usr/local/lib/` | live init, target setup, host-log mount |
+| `bin/` | `kestrel-iso-make`, `-boot`, `-sign`, `-release`, `-flash`, `-vault` |
+| `archiso/` | vendored upstream archiso (submodule) |
+| `release/` | build output (ignored) |
 
 ## License
 
