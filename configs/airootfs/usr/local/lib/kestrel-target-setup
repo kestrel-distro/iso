@@ -61,6 +61,14 @@ EOF
   hwclock --systohc 2>/dev/null || true
 }
 
+remove_live_user() {
+  # The live ISO account never reaches the target. It is always `kestrel`;
+  # removing the *target* username here would delete the account create_user
+  # is about to make (or resume), and --install-user would then fail.
+  userdel kestrel 2>/dev/null || true
+  rm -rf /home/kestrel
+}
+
 create_user() {
   local gecos=()
   [[ -n $KESTREL_USER_NAME ]] && gecos=(-c "$KESTREL_USER_NAME")
@@ -158,8 +166,6 @@ strip_live_only() {
   # so it must not be touched here. The rootfs copy already carries systemd-
   # resolved's symlink for the installed system.
 
-  # Live credentials never reach the target.
-  [[ -n ${KESTREL_USER:-} ]] && userdel "$KESTREL_USER" 2>/dev/null || true
 }
 
 # ── Deferred provisioning ────────────────────────────────────────────────────
@@ -227,6 +233,7 @@ build_boot() {
 
 write_fstab
 set_identity
+remove_live_user
 ((KESTREL_DEFER)) || create_user
 strip_live_only
 
