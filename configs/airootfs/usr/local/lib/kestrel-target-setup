@@ -77,6 +77,12 @@ create_user() {
   printf '%s:%s\n' "$KESTREL_USER" "$KESTREL_PASSWORD_HASH" | chpasswd -e
   printf 'root:%s\n' "$KESTREL_PASSWORD_HASH" | chpasswd -e
 
+  # The normal install path needs the same broad wheel grant the deferred owner
+  # writes. Without it the user is in wheel but only the narrow NOPASSWD rules
+  # apply, so ordinary sudo is refused.
+  echo "%wheel ALL=(ALL:ALL) ALL" >/etc/sudoers.d/00-kestrel-wheel
+  chmod 440 /etc/sudoers.d/00-kestrel-wheel
+
   # The Kestrel SDDM theme is password-only and logs in `userModel.lastUser`.
   # The live image's state points at the deleted live account; point it at the
   # target user or SDDM authenticates a nonexistent name.
