@@ -77,6 +77,13 @@ create_user() {
   printf '%s:%s\n' "$KESTREL_USER" "$KESTREL_PASSWORD_HASH" | chpasswd -e
   printf 'root:%s\n' "$KESTREL_PASSWORD_HASH" | chpasswd -e
 
+  # The Kestrel SDDM theme is password-only and logs in `userModel.lastUser`.
+  # The live image's state points at the deleted live account; point it at the
+  # target user or SDDM authenticates a nonexistent name.
+  mkdir -p /var/lib/sddm
+  printf '[Last]\nSession=kestrel.desktop\nUser=%s\n' "$KESTREL_USER" >/var/lib/sddm/state.conf
+  chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
+
   if [[ -n $KESTREL_USER_EMAIL ]]; then
     printf 'KESTREL_USER_NAME=%q\nKESTREL_USER_EMAIL=%q\n' \
       "$KESTREL_USER_NAME" "$KESTREL_USER_EMAIL" >"/home/$KESTREL_USER/.kestrel-identity"
