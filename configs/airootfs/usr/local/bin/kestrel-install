@@ -319,6 +319,8 @@ finish() {
   touch "$TARGET/var/tmp/kestrel-install-completed" 2>/dev/null || true
   umount -R "$TARGET" 2>/dev/null || true
   sync
+  printf '\nDone! Press Enter/Return to reboot.\n'
+  read -r _ || true
   reboot
 }
 

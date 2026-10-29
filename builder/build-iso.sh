@@ -88,7 +88,7 @@ cp "$build_work_dir/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 # Live environment packages: releng set plus the full Kestrel desktop, so the
 # ISO boots to a graphical Hyprland + Quickshell session and the copied rootfs
 # is a complete installed system.
-arch_packages=(git gum jq openssl plymouth)
+arch_packages=(git gum jq openssl plymouth stress-ng rt-tests perf powertop sysstat)
 mapfile -t kestrel_desktop < <(grep -hvE '^[[:space:]]*(#|$)' \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-base.packages" \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-other.packages")
@@ -251,6 +251,16 @@ if [[ -d ${KERNEL_PATH:-/kernel}/bench ]]; then
   install -d "$build_cache_dir/airootfs/usr/share/kestrel-bench"
   cp -a "${KERNEL_PATH:-/kernel}/bench" "$build_cache_dir/airootfs/usr/share/kestrel-bench/bench"
   chmod +x "$build_cache_dir"/airootfs/usr/share/kestrel-bench/bench/*
+fi
+
+# schbench is not in the Arch repos and the live bench script expects it.
+if [[ ! -x "$build_cache_dir/airootfs/usr/local/bin/schbench" ]]; then
+  rm -rf "$build_work_dir/schbench"
+  if git clone --depth 1 https://github.com/masoncl/schbench "$build_work_dir/schbench" >/dev/null 2>&1; then
+    if make -C "$build_work_dir/schbench" >/dev/null 2>&1; then
+      install -Dm755 "$build_work_dir/schbench/schbench" "$build_cache_dir/airootfs/usr/local/bin/schbench" || true
+    fi
+  fi
 fi
 
 # Live-only packages: everything the releng live set adds on top of the

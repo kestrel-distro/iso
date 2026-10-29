@@ -16,6 +16,7 @@ Options:
   --ssh-port PORT   host SSH port (default: first free from 2222)
   --no-ssh          do not forward SSH
   --reuse           reuse this instance's disk (same as the positional 'reuse')
+  --prepare         create the disk and OVMF vars, then exit without booting
   -h, --help        show this help
 
 Each name gets its own disk, OVMF vars and lock, so several VMs can run at
@@ -28,6 +29,7 @@ REUSE=""
 NAME="${KESTREL_VM_NAME:-default}"
 SSH_PORT="${KESTREL_VM_SSH_PORT:-}"
 NO_SSH=0
+PREPARE=0
 
 while (( $# > 0 )); do
   case "$1" in
@@ -47,6 +49,10 @@ while (( $# > 0 )); do
       ;;
     --reuse)
       REUSE="reuse"
+      shift
+      ;;
+    --prepare)
+      PREPARE=1
       shift
       ;;
     -h | --help)
@@ -71,14 +77,14 @@ while (( $# > 0 )); do
   esac
 done
 
-if [[ -z $ISO ]]; then
+if [[ -z $ISO ]] && ((!PREPARE)); then
   ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
   if gum confirm --default=false "Reuse existing disk?"; then
     REUSE="reuse"
   fi
 fi
 
-if [[ -z $ISO ]]; then
+if [[ -z $ISO ]] && ((!PREPARE)); then
   usage
   exit 1
 fi
@@ -133,6 +139,22 @@ fi
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 20G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$VM_VARS"
+fi
+
+if ((PREPARE)); then
+  echo "VM prepared (not started): $NAME"
+  echo "  disk: $DISK"
+  echo "  vars: $VM_VARS"
+  ((NO_SSH)) || echo "  ssh:  port $SSH_PORT"
+  boot_cmd=(kestrel-iso-boot --name "$NAME" --reuse)
+  if ((NO_SSH)); then
+    boot_cmd+=(--no-ssh)
+  elif [[ -n $SSH_PORT ]]; then
+    boot_cmd+=(--ssh-port "$SSH_PORT")
+  fi
+  [[ -n $ISO ]] && boot_cmd+=("$ISO")
+  printf '  boot: %s\n' "${boot_cmd[*]}"
+  exit 0
 fi
 
 # Capture everything the guest writes to its serial console, plus qemu's own

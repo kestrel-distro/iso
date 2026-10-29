@@ -30,4 +30,13 @@ file_permissions=(
   ["/usr/local/lib/kestrel-target-setup"]="0:0:755"
   ["/usr/local/lib/kestrel-host-logs"]="0:0:755"
   ["/usr/local/share/kestrel-live"]="0:0:755"
+  # mkarchiso copies custom airootfs files without preserving modes, so the
+  # bench scripts from the kernel checkout need their exec bit restored here.
+  ["/usr/share/kestrel-bench/bench/run"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/scx"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/matrix"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/compare"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/foot-workers"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/profile"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/live"]="0:0:755"
 )
