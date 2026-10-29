@@ -39,4 +39,5 @@ file_permissions=(
   ["/usr/share/kestrel-bench/bench/foot-workers"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/profile"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/live"]="0:0:755"
+  ["/usr/local/bin/schbench"]="0:0:755"
 )
