@@ -100,6 +100,28 @@ printf '%s\n' "${arch_packages[@]}" "${kestrel_desktop[@]}" >>"$build_cache_dir/
 # packages into the live rootfs; it is not shipped on the ISO.
 aur_pkg_list="$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-aur.packages"
 aur_repo="$build_work_dir/aur-repo"
+
+prune_old_repo_packages() {
+  local dir="$1" f name ver bver
+  local -A best=()
+  for f in "$dir"/*.pkg.tar.zst; do
+    [[ -e $f ]] || continue
+    read -r name ver _ < <(pacman -Qp "$f" 2>/dev/null) || continue
+    [[ -n $name && -n $ver ]] || continue
+    if [[ -z ${best[$name]:-} ]]; then
+      best[$name]="$f"
+      continue
+    fi
+    read -r _ bver _ < <(pacman -Qp "${best[$name]}" 2>/dev/null) || continue
+    if [[ $(vercmp "$ver" "$bver") -gt 0 ]]; then best[$name]="$f"; fi
+  done
+  for f in "$dir"/*.pkg.tar.zst; do
+    [[ -e $f ]] || continue
+    read -r name _ _ < <(pacman -Qp "$f" 2>/dev/null) || continue
+    [[ ${best[$name]:-} == "$f" ]] || rm -f "$f"
+  done
+}
+
 if [[ -f "$aur_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$aur_pkg_list"; then
   # The AUR list is the union of what Kestrel may need per machine. Two entries
   # cannot be baked into the live rootfs baseline:
@@ -169,6 +191,7 @@ if [[ -f "$aur_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$aur_pkg_list"; t
     cp "$aur_pkgdest"/*.pkg.tar.zst "$aur_repo/"
   fi
 
+  prune_old_repo_packages "$aur_repo"
   repo-add --new "$aur_repo/aur.db.tar.gz" "$aur_repo/"*.pkg.tar.zst
 
   # Install into the live rootfs only the AUR packages we actually have a built
@@ -235,6 +258,7 @@ if [[ -f "$source_pkg_list" ]] && grep -qvE '^[[:space:]]*(#|$)' "$source_pkg_li
   pkill -u builduser 2>/dev/null || true
   userdel -r builduser 2>/dev/null || true
 
+  prune_old_repo_packages "$aur_repo"
   repo-add "$aur_repo/aur.db.tar.gz" "$aur_repo/"*.pkg.tar.zst
 
   if ! grep -q '^\[aur\]' "$build_cache_dir/pacman.conf"; then
