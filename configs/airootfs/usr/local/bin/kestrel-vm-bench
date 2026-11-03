@@ -13,10 +13,17 @@ if ! mountpoint -q "$host" 2>/dev/null; then
 fi
 
 [[ -f $host/run-bench ]] || exit 0
+marker="$(cat "$host/run-bench" 2>/dev/null || true)"
 rm -f "$host/run-bench"
 
-export KESTREL_BENCH_MODE=all
-export KESTREL_BENCH_REPS="${KESTREL_BENCH_REPS:-5}"
+if [[ $marker == quick* ]]; then
+  export KESTREL_BENCH_MODE=session
+  export KESTREL_BENCH_REPS=1
+  export KESTREL_MATRIX_VARIANTS="bridge:scx_kestrel::on:on"
+else
+  export KESTREL_BENCH_MODE=all
+  export KESTREL_BENCH_REPS="${KESTREL_BENCH_REPS:-5}"
+fi
 
 timeout 7200 /usr/bin/kestrel-bench || true
 sudo -n systemctl poweroff 2>/dev/null || true
