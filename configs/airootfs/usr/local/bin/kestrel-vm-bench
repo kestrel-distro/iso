@@ -16,14 +16,35 @@ fi
 marker="$(cat "$host/run-bench" 2>/dev/null || true)"
 rm -f "$host/run-bench"
 
+mode=all
+reps="${KESTREL_BENCH_REPS:-5}"
+bg=0
+variants=""
+layers=""
+while IFS='=' read -r k v; do
+  case "$k" in
+    mode) mode="$v" ;;
+    reps) reps="$v" ;;
+    bg) bg="$v" ;;
+    variants) variants="$v" ;;
+    layers) layers="$v" ;;
+  esac
+done <<<"$marker"
+
 if [[ $marker == quick* ]]; then
-  export KESTREL_BENCH_MODE=session
-  export KESTREL_BENCH_REPS=1
-  export KESTREL_MATRIX_VARIANTS="bridge:scx_kestrel::on:on"
-else
-  export KESTREL_BENCH_MODE=all
-  export KESTREL_BENCH_REPS="${KESTREL_BENCH_REPS:-5}"
+  mode=all
+  reps=1
+  variants="bridge:scx_kestrel::on:on"
 fi
+
+if [[ -n $layers && -f $layers ]]; then
+  sudo -n install -m644 "$layers" /usr/share/scx_kestrel/kestrel-layers.json || true
+fi
+
+export KESTREL_BENCH_MODE="$mode"
+export KESTREL_BENCH_REPS="$reps"
+export KESTREL_BENCH_BG_CPUS="$bg"
+[[ -n $variants ]] && export KESTREL_MATRIX_VARIANTS="$variants"
 
 timeout 7200 /usr/bin/kestrel-bench || true
 sudo -n systemctl poweroff 2>/dev/null || true
