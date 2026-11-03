@@ -9,7 +9,7 @@
 #
 # Usage:
 #   kestrel-iso-flash <iso> <device> [--cow-size SIZE]
-#   kestrel-iso-flash release/kestrel.iso /dev/sdX --cow-size 8G
+#   kestrel-iso-flash /data/kestrel-iso/release/kestrel.iso /dev/sdX --cow-size 8G
 #
 # Without --cow-size the device gets only the ISO (the vault then uses the
 # compressed-RAM COW). With it, a partition named KESTREL_VAULT_COW is appended

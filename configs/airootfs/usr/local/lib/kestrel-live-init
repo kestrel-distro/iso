@@ -43,7 +43,7 @@ fi
 # installer notice so it fires once per session start.
 autostart="$home/.config/hypr/autostart.lua"
 if [[ -f $autostart ]] && ! grep -q 'kestrel-live-notice' "$autostart"; then
-  printf '\n-- Live ISO: point the user at the installer and capture VM diagnostics.\no.exec_on_start("kestrel-live-notice")\no.exec_on_start("kestrel-vm-report")\n' >>"$autostart"
+  printf '\n-- Live ISO: point the user at the installer and capture VM diagnostics.\no.exec_on_start("kestrel-live-notice")\no.exec_on_start("kestrel-vm-report")\no.exec_on_start("kestrel-vm-bench")\n' >>"$autostart"
 fi
 
 # The session desktop for uwsm, pointing at the payload's copy.

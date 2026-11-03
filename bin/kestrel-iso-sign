@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ $# -eq 0 ]; then
-  echo "usage: kestrel-iso-sign [release/kestrel.iso]"
+  echo "usage: kestrel-iso-sign [kestrel.iso]"
   exit 1
 fi
 

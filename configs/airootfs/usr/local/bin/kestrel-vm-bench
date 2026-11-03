@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Dev-only: run the full benchmark matrix on a live VM when the host share
+# contains a `run-bench` marker. The live session autostarts this; normal boots
+# do nothing because the marker is absent.
+
+host=/mnt/kestrel-host-logs
+
+sudo -n mkdir -p "$host" 2>/dev/null || true
+if ! mountpoint -q "$host" 2>/dev/null; then
+  sudo -n modprobe 9p 9pnet 9pnet_virtio 2>/dev/null || true
+  sudo -n mount -t 9p -o trans=virtio,version=9p2000.L kestrel_host_logs "$host" 2>/dev/null || true
+fi
+
+[[ -f $host/run-bench ]] || exit 0
+rm -f "$host/run-bench"
+
+export KESTREL_BENCH_MODE=all
+export KESTREL_BENCH_REPS="${KESTREL_BENCH_REPS:-5}"
+
+timeout 5400 /usr/bin/kestrel-bench || true
+sudo -n systemctl poweroff 2>/dev/null || true

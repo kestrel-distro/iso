@@ -1,0 +1,15 @@
+#!/bin/bash
+# Pick the directory built ISOs are written to. Heavy output belongs on /data
+# when it exists; KESTREL_RELEASE_DIR overrides the choice.
+kestrel_release_dir() {
+  local root=$1
+  if [[ -n ${KESTREL_RELEASE_DIR:-} ]]; then
+    printf '%s\n' "$KESTREL_RELEASE_DIR"
+    return
+  fi
+  if [[ -d /data && -w /data ]]; then
+    printf '%s\n' /data/kestrel-iso/release
+    return
+  fi
+  printf '%s\n' "$root/release"
+}

@@ -26,6 +26,7 @@ file_permissions=(
   ["/usr/local/bin/kestrel-install"]="0:0:755"
   ["/usr/local/bin/kestrel-live-notice"]="0:0:755"
   ["/usr/local/bin/kestrel-vm-report"]="0:0:755"
+  ["/usr/local/bin/kestrel-vm-bench"]="0:0:755"
   ["/usr/local/lib/kestrel-live-init"]="0:0:755"
   ["/usr/local/lib/kestrel-target-setup"]="0:0:755"
   ["/usr/local/lib/kestrel-host-logs"]="0:0:755"

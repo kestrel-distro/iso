@@ -38,7 +38,7 @@ and the desktop defaults.
 ## Creating the ISO
 
 ```bash
-./bin/kestrel-iso-make                 # build release/<name>.iso
+./bin/kestrel-iso-make                 # build /data/kestrel-iso/release/<name>.iso
 ./bin/kestrel-iso-make --local-source   # build from ../kestrel and ../kernel
 ./bin/kestrel-iso-make --no-boot-offer
 ```
@@ -70,12 +70,13 @@ repository HEAD.
 | `KESTREL_INSTALLER_REPO` | GitHub payload repository (default `kestrel-distro/kestrel`). |
 | `KESTREL_INSTALLER_REF` | Payload git ref (default `main`); ignored with `--local-source`. |
 | `KESTREL_BUILD_DIR` | Heavy scratch directory (default `/data/kestrel-iso-build`). |
+| `KESTREL_RELEASE_DIR` | ISO output directory (default `/data/kestrel-iso/release` when `/data` is writable, otherwise `release/`). |
 | `KESTREL_VM_GL` | Set to `1` on `kestrel-iso-boot` to use `virtio-vga-gl`. |
 
 ## Testing the ISO
 
 ```bash
-./bin/kestrel-iso-boot [--name NAME] [--ssh-port PORT|--no-ssh] release/<image>.iso
+./bin/kestrel-iso-boot [--name NAME] [--ssh-port PORT|--no-ssh] /data/kestrel-iso/release/<image>.iso
 ```
 
 The helper installs `qemu-full` and `edk2-ovmf` if missing, creates a 20 GiB
@@ -98,7 +99,7 @@ machine.
 ## Signing and releasing
 
 ```bash
-./bin/kestrel-iso-sign [gpg-user] [release/iso]   # detached signature
+./bin/kestrel-iso-sign [gpg-user] [iso]           # detached signature
 ./bin/kestrel-iso-release                          # build + sign + checksum
 ./bin/kestrel-iso-flash <iso>                      # write to USB (+ vault COW)
 ```
@@ -114,7 +115,7 @@ machine.
 | `configs/airootfs/usr/local/lib/` | live init, target setup, host-log mount |
 | `bin/` | `kestrel-iso-make`, `-boot`, `-sign`, `-release`, `-flash`, `-vault` |
 | `archiso/` | vendored upstream archiso (submodule) |
-| `release/` | build output (ignored) |
+| `release/` | fallback build output when `/data` is unavailable (ignored) |
 
 ## License
 

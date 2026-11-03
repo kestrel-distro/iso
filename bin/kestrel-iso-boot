@@ -2,6 +2,10 @@
 
 set -e
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+. "$SCRIPT_DIR/lib-release-dir"
+RELEASE_DIR=$(kestrel_release_dir "$(dirname "$SCRIPT_DIR")")
+
 die() {
   echo "$*" >&2
   exit 1
@@ -9,7 +13,7 @@ die() {
 
 usage() {
   cat <<EOF
-Usage: kestrel-iso-boot [options] [release/kestrel.iso] [reuse]
+Usage: kestrel-iso-boot [options] [kestrel.iso] [reuse]
 
 Options:
   --name NAME       VM instance name (default: ${KESTREL_VM_NAME:-default})
@@ -78,7 +82,7 @@ while (( $# > 0 )); do
 done
 
 if [[ -z $ISO ]] && ((!PREPARE)); then
-  ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
+  ISO=$(ls -t "$RELEASE_DIR"/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
   if gum confirm --default=false "Reuse existing disk?"; then
     REUSE="reuse"
   fi

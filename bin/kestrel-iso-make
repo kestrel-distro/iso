@@ -45,7 +45,8 @@ git submodule update --init --recursive --jobs=8
 # Prepare build repo
 BUILD_SCRIPT="builder/build-iso.sh"
 BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
-BUILD_RELEASE_PATH="$BUILD_ROOT/release"
+. "${BASH_SOURCE[0]%/*}/lib-release-dir"
+BUILD_RELEASE_PATH=$(kestrel_release_dir "$BUILD_ROOT")
 mkdir -p "$BUILD_RELEASE_PATH"
 
 # Heavy scratch (kernel source tree, AUR builds, mkarchiso work) goes on /data so
