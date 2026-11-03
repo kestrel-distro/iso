@@ -18,5 +18,5 @@ rm -f "$host/run-bench"
 export KESTREL_BENCH_MODE=all
 export KESTREL_BENCH_REPS="${KESTREL_BENCH_REPS:-5}"
 
-timeout 5400 /usr/bin/kestrel-bench || true
+timeout 7200 /usr/bin/kestrel-bench || true
 sudo -n systemctl poweroff 2>/dev/null || true
