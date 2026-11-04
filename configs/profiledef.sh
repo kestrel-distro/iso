@@ -35,6 +35,7 @@ file_permissions=(
   # bench scripts from the kernel checkout need their exec bit restored here.
   ["/usr/share/kestrel-bench/bench/run"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/sysstats"]="0:0:755"
+  ["/usr/share/kestrel-bench/bench/packages"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/scx"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/matrix"]="0:0:755"
   ["/usr/share/kestrel-bench/bench/compare"]="0:0:755"

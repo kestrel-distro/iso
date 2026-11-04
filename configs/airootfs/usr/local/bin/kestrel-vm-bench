@@ -21,6 +21,7 @@ reps="${KESTREL_BENCH_REPS:-5}"
 bg=0
 variants=""
 layers=""
+pmode="all"
 while IFS='=' read -r k v; do
   case "$k" in
     mode) mode="$v" ;;
@@ -28,6 +29,7 @@ while IFS='=' read -r k v; do
     bg) bg="$v" ;;
     variants) variants="$v" ;;
     layers) layers="$v" ;;
+    pmode) pmode="$v" ;;
   esac
 done <<<"$marker"
 
@@ -39,6 +41,14 @@ fi
 
 if [[ -n $layers && -f $layers ]]; then
   sudo -n install -m644 "$layers" /usr/share/scx_kestrel/kestrel-layers.json || true
+fi
+
+if [[ $mode == packages ]]; then
+  export KESTREL_PACKAGES_MODE="$pmode"
+  export KESTREL_PACKAGES_CLEAN=1
+  timeout 1800 /usr/share/kestrel-bench/bench/packages packages || true
+  sudo -n systemctl poweroff 2>/dev/null || true
+  exit 0
 fi
 
 export KESTREL_BENCH_MODE="$mode"
