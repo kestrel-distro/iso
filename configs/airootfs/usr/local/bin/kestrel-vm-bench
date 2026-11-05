@@ -22,7 +22,6 @@ bg=0
 variants=""
 layers=""
 pmode="all"
-backend=""
 while IFS='=' read -r k v; do
   case "$k" in
     mode) mode="$v" ;;
@@ -31,7 +30,6 @@ while IFS='=' read -r k v; do
     variants) variants="$v" ;;
     layers) layers="$v" ;;
     pmode) pmode="$v" ;;
-    backend) backend="$v" ;;
   esac
 done <<<"$marker"
 
@@ -58,7 +56,6 @@ fi
 
 if [[ $mode == packages ]]; then
   export KESTREL_PACKAGES_MODE="$pmode"
-  export KESTREL_QSG_BACKEND="$backend"
   export KESTREL_PACKAGES_CLEAN=1
   timeout 1800 /usr/share/kestrel-bench/bench/packages packages || true
   sudo -n systemctl poweroff 2>/dev/null || true
