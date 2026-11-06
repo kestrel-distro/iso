@@ -61,6 +61,22 @@ if [[ $mode == packages || $mode == gpu ]]; then
   sleep 1
 fi
 
+if [[ -n $damon ]]; then
+  sudo -n /usr/bin/kestrel-damon-reclaim >/dev/null 2>&1 || true
+  if [[ $damon == aggressive ]]; then
+    sudo -n sh -c '
+      p=/sys/module/damon_reclaim/parameters
+      echo 800 > "$p/wmarks_high"
+      echo 700 > "$p/wmarks_mid"
+      echo 600 > "$p/wmarks_low"
+      echo 30000000 > "$p/min_age"
+      echo 268435456 > "$p/quota_sz"
+      echo Y > "$p/commit_inputs"
+    ' >/dev/null 2>&1 || true
+  fi
+  sleep 1
+fi
+
 if [[ $mode == gpu ]]; then
   export KESTREL_PACKAGES_MODE="$pmode"
   /usr/local/bin/kestrel-gpu-probe || true
