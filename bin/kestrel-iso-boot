@@ -20,6 +20,8 @@ Options:
   --ssh-port PORT   host SSH port (default: first free from 2222)
   --no-ssh          do not forward SSH
   --reuse           reuse this instance's disk (same as the positional 'reuse')
+  --gpu MODE        test GPU path: virgl|venus|drm|off (default: off)
+  --gpu-display D   display backend for --gpu: egl-headless|gtk|sdl
   --prepare         create the disk and OVMF vars, then exit without booting
   -h, --help        show this help
 
@@ -34,6 +36,8 @@ NAME="${KESTREL_VM_NAME:-default}"
 SSH_PORT="${KESTREL_VM_SSH_PORT:-}"
 NO_SSH=0
 PREPARE=0
+GPU_MODE="${KESTREL_VM_GPU:-off}"
+GPU_DISPLAY="${KESTREL_VM_GPU_DISPLAY:-egl-headless}"
 
 while (( $# > 0 )); do
   case "$1" in
@@ -58,6 +62,16 @@ while (( $# > 0 )); do
     --prepare)
       PREPARE=1
       shift
+      ;;
+    --gpu)
+      [[ -n ${2:-} ]] || die "--gpu needs a value"
+      GPU_MODE=$2
+      shift 2
+      ;;
+    --gpu-display)
+      [[ -n ${2:-} ]] || die "--gpu-display needs a value"
+      GPU_DISPLAY=$2
+      shift 2
       ;;
     -h | --help)
       usage
@@ -181,15 +195,55 @@ else
 fi
 echo "VM input: hover the window to grab the keyboard and mouse; Ctrl+Alt+G releases."
 
-# virtio-vga-gl routes 3D through the host EGL driver, and the NVIDIA EGL
-# stack segfaults QEMU on this host (libnvidia-eglcore, CPMMListener). Use the
-# 2D virtio device by default; KESTREL_VM_GL=1 opts back into 3D when the host
-# driver is healthy.
-if [[ ${KESTREL_VM_GL:-0} == 1 ]]; then
-  display_args=(-device virtio-vga-gl -display gtk,gl=on,grab-on-hover=on)
-else
-  display_args=(-device virtio-vga -display gtk,gl=off,grab-on-hover=on)
-fi
+# Path A GPU probe. This is not passthrough: virglrenderer/Venus translate
+# guest GL/Vulkan to the host NVIDIA driver. Keep 2D as the default; the modes
+# below are for the GPU test ISO and can be crashed by the known NVIDIA EGL
+# bug, so they must stay opt-in.
+machine_opts="q35,accel=kvm"
+mem_args=()
+case "$GPU_MODE" in
+  off | "")
+    if [[ ${KESTREL_VM_GL:-0} == 1 ]]; then
+      display_args=(-device virtio-vga-gl -display gtk,gl=on,grab-on-hover=on)
+    else
+      display_args=(-device virtio-vga -display gtk,gl=off,grab-on-hover=on)
+    fi
+    ;;
+  virgl | venus | drm)
+    case "$GPU_DISPLAY" in
+      egl-headless)
+        display=(-display egl-headless)
+        ;;
+      gtk)
+        display=(-display gtk,gl=on,grab-on-hover=on)
+        ;;
+      sdl)
+        display=(-display sdl,gl=on)
+        ;;
+      *)
+        die "unknown --gpu-display: $GPU_DISPLAY"
+        ;;
+    esac
+    gpu_opts="hostmem=4G,max_hostmem=4G,blob=on"
+    case "$GPU_MODE" in
+      virgl)
+        gpu_opts+=",venus=on"
+        ;;
+      venus)
+        gpu_opts+=",venus=on"
+        ;;
+      drm)
+        gpu_opts+=",drm_native_context=on"
+        ;;
+    esac
+    display_args=(-device "virtio-vga-gl,$gpu_opts" -vga none "${display[@]}")
+    mem_args=(-object memory-backend-memfd,id=mem1,size=8192M)
+    machine_opts+=",memory-backend=mem1"
+    ;;
+  *)
+    die "unknown --gpu: $GPU_MODE (use virgl|venus|drm|off)"
+    ;;
+esac
 
 if ((NO_SSH)); then
   net_args=(-netdev user,id=net0)
@@ -199,7 +253,7 @@ fi
 
 # Boot from ISO before we've installed, then boot from drive after
 qemu-system-x86_64 \
-  -cpu host -enable-kvm -machine q35,accel=kvm \
+  -cpu host -enable-kvm "${mem_args[@]}" -machine "$machine_opts" \
   -smp "$(nproc)" \
   -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \

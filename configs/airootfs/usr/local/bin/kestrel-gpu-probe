@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# Dev-only Path A probe: capture what the guest actually sees for GL/Vulkan
+# before running the package harness. The host share must already be mounted
+# by kestrel-vm-bench.
+
+set -u
+
+host=/mnt/kestrel-host-logs
+stamp=$(date +%Y%m%d-%H%M%S)
+out="$host/gpu-probe-$stamp.log"
+mkdir -p "$host"
+: >"$out"
+
+say() { printf '\n== %s ==\n' "$*" >>"$out"; }
+run_user() {
+  local -a envs=(
+    HOME=/home/kestrel
+    XDG_RUNTIME_DIR=/run/user/1000
+    WAYLAND_DISPLAY=wayland-1
+    DISPLAY=:0
+  )
+  if [[ $(id -u) -eq 0 ]]; then
+    runuser -u kestrel -- env "${envs[@]}" "$@" >>"$out" 2>&1 || true
+  else
+    env "${envs[@]}" "$@" >>"$out" 2>&1 || true
+  fi
+}
+
+say "date"
+date >>"$out"
+say "uname"
+uname -a >>"$out"
+say "cmdline"
+cat /proc/cmdline >>"$out"
+say "pci display"
+lspci -nnk | grep -iA3 'vga\|3d controller\|display controller' >>"$out" 2>&1 || true
+say "drm"
+ls -l /dev/dri >>"$out" 2>&1 || true
+for d in /sys/class/drm/card*/device/uevent; do
+  [[ -r $d ]] || continue
+  echo "--- $d" >>"$out"
+  cat "$d" >>"$out" 2>&1 || true
+done
+say "kernel drm"
+dmesg 2>/dev/null | grep -iE 'virtio_gpu|virgl|venus|nvidia|drm' | tail -80 >>"$out" || true
+say "glxinfo"
+if command -v glxinfo >/dev/null; then
+  run_user glxinfo -B
+else
+  echo "glxinfo: not installed" >>"$out"
+fi
+say "eglinfo"
+if command -v eglinfo >/dev/null; then
+  run_user eglinfo -B
+else
+  echo "eglinfo: not installed" >>"$out"
+fi
+say "vulkaninfo"
+if command -v vulkaninfo >/dev/null; then
+  run_user vulkaninfo --summary
+else
+  echo "vulkaninfo: not installed" >>"$out"
+fi
+say "vkcube"
+if command -v vkcube >/dev/null; then
+  if [[ $(id -u) -eq 0 ]]; then
+    timeout 5 runuser -u kestrel -- env \
+      HOME=/home/kestrel XDG_RUNTIME_DIR=/run/user/1000 \
+      WAYLAND_DISPLAY=wayland-1 DISPLAY=:0 vkcube >>"$out" 2>&1 || true
+  else
+    timeout 5 env \
+      HOME=/home/kestrel XDG_RUNTIME_DIR=/run/user/1000 \
+      WAYLAND_DISPLAY=wayland-1 DISPLAY=:0 vkcube >>"$out" 2>&1 || true
+  fi
+else
+  echo "vkcube: not installed" >>"$out"
+fi
+say "nvidia-smi"
+if command -v nvidia-smi >/dev/null; then
+  nvidia-smi >>"$out" 2>&1 || true
+else
+  echo "nvidia-smi: not present (expected with virgl/Venus)" >>"$out"
+fi
+
+# Reuse the existing package harness so GPU-backed metrics line up with the
+# llvmpipe baseline.
+pmode="${KESTREL_PACKAGES_MODE:-all}"
+KESTREL_PACKAGES_MODE="$pmode" /usr/share/kestrel-bench/bench/packages gpu >>"$out" 2>&1 || true
+say "done"
+echo "wrote $out" >>"$out"

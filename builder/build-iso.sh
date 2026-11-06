@@ -88,7 +88,7 @@ cp "$build_work_dir/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 # Live environment packages: releng set plus the full Kestrel desktop, so the
 # ISO boots to a graphical Hyprland + Quickshell session and the copied rootfs
 # is a complete installed system.
-arch_packages=(git gum jq openssl plymouth stress-ng rt-tests perf powertop sysstat)
+arch_packages=(git gum jq openssl plymouth stress-ng rt-tests perf powertop sysstat mesa-utils vulkan-tools vulkan-virtio)
 mapfile -t kestrel_desktop < <(grep -hvE '^[[:space:]]*(#|$)' \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-base.packages" \
   "$build_cache_dir/airootfs/usr/share/kestrel/install/kestrel-other.packages")

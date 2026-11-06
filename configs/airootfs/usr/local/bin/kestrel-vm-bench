@@ -54,11 +54,21 @@ if [[ -n $layers && -f $layers ]]; then
   sudo -n install -m644 "$layers" /usr/share/scx_kestrel/kestrel-layers.json || true
 fi
 
-if [[ $mode == packages ]]; then
+if [[ $mode == packages || $mode == gpu ]]; then
   # The live image does not enable system services either; start the default
   # sched_ext scheduler so package numbers are measured under scx_kestrel.
   sudo -n systemctl start scx_loader.service >/dev/null 2>&1 || true
   sleep 1
+fi
+
+if [[ $mode == gpu ]]; then
+  export KESTREL_PACKAGES_MODE="$pmode"
+  /usr/local/bin/kestrel-gpu-probe || true
+  sudo -n systemctl poweroff 2>/dev/null || true
+  exit 0
+fi
+
+if [[ $mode == packages ]]; then
   export KESTREL_PACKAGES_MODE="$pmode"
   export KESTREL_PACKAGES_CLEAN=1
   timeout 1800 /usr/share/kestrel-bench/bench/packages packages || true

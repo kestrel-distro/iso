@@ -92,9 +92,34 @@ rather than resetting the disk.
 
 The VM display defaults to the 2D `virtio-vga` device. `virtio-vga-gl` routes 3D
 through the host EGL driver and has crashed QEMU in `libnvidia-eglcore`; use
-`KESTREL_VM_GL=1` only on a host where that path is known good. This is the only
-supported way to exercise an install: do not run the installer against your own
-machine.
+`KESTREL_VM_GL=1` only on a host where that path is known good.
+
+### Paravirtual GPU probe (Path A)
+
+This is not passthrough: virglrenderer/Venus translate guest GL/Vulkan to the
+host GPU. It is enough to compare GPU-backed rendering with llvmpipe, but it
+does not report real VRAM or passthrough latency. The GPU probe is opt-in:
+
+```bash
+# host share marker consumed at login
+printf 'mode=gpu\npmode=all\n' > ~/.cache/kestrel/vm-logs/run-bench
+
+./bin/kestrel-iso-boot --name gpu --gpu virgl --gpu-display egl-headless \
+  /data/kestrel-iso/release/<image>.iso
+```
+
+`--gpu` accepts `virgl`, `venus`, `drm`, or `off`; `--gpu-display` accepts
+`egl-headless`, `gtk`, or `sdl`. The guest writes `gpu-probe-*.log` to the host
+share with `glxinfo`, `eglinfo`, `vulkaninfo`, `vkcube`, DRM details, and then
+runs the normal package harness (`pmode`). `egl-headless` avoids the GTK/EGL
+crash path; `gtk`/`sdl` are fallbacks.
+
+Path A requires guest `mesa-utils`, `vulkan-tools`, and `vulkan-virtio`; the
+live build includes them. Real GPU passthrough still requires taking the GPU
+from the host and is not configured by this helper.
+
+This is the only supported way to exercise an install: do not run the installer
+against your own machine.
 
 ## Signing and releasing
 
